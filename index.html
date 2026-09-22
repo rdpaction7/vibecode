@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Vibecode — Community Forum</title>
+<meta name="description" content="A cozy local-first forum. No server, no database — everything lives in your browser." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>" />
+<script>
+  /* set theme before first paint to avoid a flash */
+  try {
+    var t = localStorage.getItem('vibecode.theme');
+    if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <button class="icon-btn only-mobile" data-action="menu" aria-label="Open menu">☰</button>
+
+    <a class="brand" href="#/">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">Vibecode <span class="brand-sub">forum</span></span>
+    </a>
+
+    <div class="search">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="Search threads…" autocomplete="off" aria-label="Search threads" />
+    </div>
+
+    <div class="topbar-actions">
+      <button class="icon-btn" data-action="theme" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+      <a class="btn btn-primary hide-sm" href="#/new">+ New thread</a>
+      <button class="user-chip" id="userChip" data-action="me" title="Your profile"></button>
+    </div>
+  </div>
+</header>
+
+<div class="scrim" data-action="menu"></div>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main id="main"></main>
+</div>
+
+<!-- first-run: pick a display name -->
+<div class="modal hidden" id="setupModal">
+  <div class="modal-card">
+    <div class="modal-emoji">👋</div>
+    <h2>Welcome to the forum</h2>
+    <p>This forum is <b>local-only</b> — posts are stored in your browser, no account needed. Pick a display name to start posting.</p>
+    <form id="setupForm">
+      <input class="input" name="name" id="setupName" maxlength="32" placeholder="Your display name" autocomplete="off" required />
+      <button class="btn btn-primary btn-block" type="submit">Start posting</button>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
