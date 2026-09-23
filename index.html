@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Vibecode — Community Forum</title>
-<meta name="description" content="A cozy local-first forum. No server, no database — everything lives in your browser." />
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>💬</text></svg>" />
+<title>bashForum — the community for shell tinkerers</title>
+<meta name="description" content="bashForum — a community forum for shell tinkerers and script addicts. Share configs, trade aliases, debug together." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2222%22 fill=%22%2316a34a%22/><text x=%2250%22 y=%2274%22 font-size=%2256%22 text-anchor=%22middle%22 font-family=%22monospace%22 font-weight=%22bold%22 fill=%22white%22%3E%3E_%3C/text%3E</svg>" />
 <script>
   /* set theme before first paint to avoid a flash */
   try {
-    var t = localStorage.getItem('vibecode.theme');
+    var t = localStorage.getItem('bashforum.theme');
     if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     document.documentElement.dataset.theme = t;
   } catch (e) {}
@@ -18,45 +18,103 @@
 </head>
 <body>
 
-<header class="topbar">
-  <div class="topbar-inner">
-    <button class="icon-btn only-mobile" data-action="menu" aria-label="Open menu">☰</button>
+<div class="header">
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#/">
+        <span class="brand-mark">&gt;_</span>
+        <span class="brand-name">bash<span class="brand-accent">Forum</span></span>
+      </a>
 
-    <a class="brand" href="#/">
-      <span class="brand-mark">◆</span>
-      <span class="brand-name">Vibecode <span class="brand-sub">forum</span></span>
-    </a>
+      <div class="search">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input id="search" type="search" placeholder="Search bashForum" autocomplete="off" aria-label="Search posts" />
+      </div>
 
-    <div class="search">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-      <input id="search" type="search" placeholder="Search threads…" autocomplete="off" aria-label="Search threads" />
+      <div class="topbar-actions">
+        <button class="icon-btn cmd-btn" data-action="cmd-open" id="cmdBtn" title="Moderation console (Ctrl + `)" aria-label="Moderation console">&gt;_</button>
+        <button class="icon-btn" data-action="theme" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+        <a class="btn btn-primary btn-new" href="#/new"><span class="plus">＋</span><span class="label">New Post</span></a>
+        <button class="user-chip" id="userChip" data-action="me" title="Your profile"></button>
+      </div>
     </div>
+  </header>
 
-    <div class="topbar-actions">
-      <button class="icon-btn" data-action="theme" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
-      <a class="btn btn-primary hide-sm" href="#/new">+ New thread</a>
-      <button class="user-chip" id="userChip" data-action="me" title="Your profile"></button>
+  <nav class="topnav" aria-label="Navigation">
+    <div class="topnav-inner">
+      <div class="nav-group">
+        <a class="nav-tab" data-view="main" href="#/"><span class="nav-ico">🧵</span> Main</a>
+        <a class="nav-tab" data-view="about" href="#/about"><span class="nav-ico">ℹ️</span> About</a>
+        <a class="nav-tab" data-view="profile" href="#/profile"><span class="nav-ico">👤</span> Profile</a>
+      </div>
+      <span class="nav-sep" aria-hidden="true"></span>
+      <div class="nav-group" id="navCats"></div>
     </div>
-  </div>
-</header>
+  </nav>
+</div>
 
-<div class="scrim" data-action="menu"></div>
+<div class="site-banner hidden" id="siteBanner"></div>
 
 <div class="layout">
-  <aside class="sidebar" id="sidebar"></aside>
   <main id="main"></main>
 </div>
 
-<!-- first-run: pick a display name -->
-<div class="modal hidden" id="setupModal">
-  <div class="modal-card">
-    <div class="modal-emoji">👋</div>
-    <h2>Welcome to the forum</h2>
-    <p>This forum is <b>local-only</b> — posts are stored in your browser, no account needed. Pick a display name to start posting.</p>
-    <form id="setupForm">
-      <input class="input" name="name" id="setupName" maxlength="32" placeholder="Your display name" autocomplete="off" required />
-      <button class="btn btn-primary btn-block" type="submit">Start posting</button>
+<footer class="site-foot">
+  <span class="foot-logo">&gt;_</span>
+  <span>bashForum — talk shell</span>
+  <span class="foot-sep">·</span>
+  <a href="#/about">About</a>
+  <span class="foot-sep">·</span>
+  <span>Made by <b>Tanishq Lalwani</b></span>
+</footer>
+
+<!-- sign in / create account -->
+<div class="modal hidden" id="authModal">
+  <div class="modal-card auth-card">
+    <div class="modal-logo">&gt;_</div>
+    <h2>Welcome to bashForum</h2>
+    <p>Sign in to post, vote and build your profile.</p>
+
+    <div class="auth-tabs">
+      <button type="button" class="auth-tab active" data-action="auth-tab" data-which="login">Sign in</button>
+      <button type="button" class="auth-tab" data-action="auth-tab" data-which="register">Create account</button>
+    </div>
+
+    <form id="loginForm" class="auth-form">
+      <label for="li-email">Email</label>
+      <input class="input" id="li-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" required />
+      <label for="li-pass">Password</label>
+      <input class="input" id="li-pass" type="password" name="password" placeholder="••••••••" autocomplete="current-password" required />
+      <button class="btn btn-primary btn-block" type="submit">Sign in</button>
     </form>
+
+    <form id="registerForm" class="auth-form hidden">
+      <label for="rg-name">Display name</label>
+      <input class="input" id="rg-name" name="name" maxlength="32" placeholder="How the forum sees you" autocomplete="nickname" required />
+      <label for="rg-email">Email</label>
+      <input class="input" id="rg-email" type="email" name="email" placeholder="you@example.com" autocomplete="email" required />
+      <label for="rg-pass">Password</label>
+      <input class="input" id="rg-pass" type="password" name="password" minlength="6" placeholder="At least 6 characters" autocomplete="new-password" required />
+      <button class="btn btn-primary btn-block" type="submit">Create account</button>
+    </form>
+
+    <div class="auth-err" id="authErr" role="alert"></div>
+  </div>
+</div>
+
+<!-- moderation console -->
+<div class="modal hidden" id="cmdModal" role="dialog" aria-label="Moderation console">
+  <div class="cmd-card">
+    <div class="cmd-head">
+      <span class="cmd-title"><span class="cmd-mark">&gt;_</span> moderation console</span>
+      <button class="icon-btn cmd-x" data-action="cmd-close" aria-label="Close console">✕</button>
+    </div>
+    <div class="cmd-log" id="cmdLog" aria-live="polite"></div>
+    <form class="cmd-row" id="cmdForm">
+      <span class="cmd-prompt">❯</span>
+      <input id="cmdInput" autocomplete="off" spellcheck="false" placeholder="type a command — /help lists them" aria-label="Command" />
+    </form>
+    <div class="cmd-hint">Enter runs · ↑ ↓ history · Esc closes</div>
   </div>
 </div>
 

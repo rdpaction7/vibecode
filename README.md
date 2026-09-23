@@ -1,7 +1,6 @@
-# vibecode
+# bashForum
 
-A cozy, **local-first forum**. No server, no database, no accounts — everything you post
-lives in your browser's `localStorage`.
+A community forum for shell tinkerers, script addicts and prompt customizers.
 
 ## Run it
 
@@ -16,36 +15,36 @@ Opening `index.html` directly via `file://` also works in most browsers.
 
 ## Features
 
-- Threads, replies (with nesting), likes, and tags
-- 5 categories with per-category counts in the sidebar
-- Sorting: recent activity, newest, most liked, most discussed
-- Live search across titles, bodies, authors, and replies
-- Profiles — pick a display name on first visit, rename any time
-- Own posts can be deleted; "Reset demo data" restores the seed content
-- Dark / light theme, mobile-friendly sidebar
-- Hash-based routing (`#/`, `#/t/<id>`, `#/new`, `#/user/<id>`)
+- Reddit-style feed with upvotes / downvotes, post scores and karma
+- Top navigation: **Main** (feed), **About** (info, rules, credits) and **Profile**
+- Profile pages with picture, description, karma, upvote rating, posts and comments
+- Threads with nested comments, tags and per-community flairs
+- Communities: Announcements, General, Help & Support, Show & Tell, Off-Topic
+- Sorting: Hot, New, Top, Rising
+- Live search across titles, bodies, authors and comments
+- Email + password sign-in with local accounts (salted, iterated password hashes); your own posts and comments can be deleted
+- Dark / light theme, mobile-friendly drawer navigation
+- Hash-based routing (`#/`, `#/about`, `#/profile`, `#/t/<id>`, `#/new`, `#/user/<id>`)
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | Shell: topbar, sidebar mount, setup modal, toast |
+| `index.html` | Shell: topbar, top nav, auth modal, toast |
 | `styles.css` | Design system (CSS variables for both themes) |
-| `app.js` | Storage layer, router, views, and event handling |
+| `app.js` | Storage layer, router, views and event handling |
 
-## Storage model
-
-All state sits under one key, `vibecode.forum.v1`:
+## Structure
 
 ```js
 {
-  users:   { [id]: { id, name, joined } },
-  threads: [{ id, title, body, cat, author, tags, created, likes: [], replies: [...] }],
-  replies: [{ id, parent, author, body, created, likes: [] }],
+  users:   { [id]: { id, name, bio, pfp, joined } },
+  accounts: { [email]: { salt, hash, userId } },
+  threads: [{ id, title, body, cat, author, tags, created, up: [], down: [], replies: [...] }],
+  replies: [{ id, parent, author, body, created, up: [], down: [] }],
   currentUserId,
   prefs: { named, theme }
 }
 ```
 
-Writes are wrapped in `try/catch` so private-browsing storage restrictions degrade
-gracefully instead of failing silently.
+Comments, votes and profiles all persist between sessions.

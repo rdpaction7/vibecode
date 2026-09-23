@@ -1,16 +1,20 @@
 /* ============================================================
-   Vibecode Forum — local-first, no backend.
-   Everything (users, threads, replies, likes) lives in
-   localStorage under a single key. No network requests.
+   bashForum — the community for shell tinkerers.
+   Reddit-style feed: votes, karma, communities, sorting.
    ============================================================ */
 (() => {
   'use strict';
 
-  const KEY = 'vibecode.forum.v1';
+  const KEY = 'bashforum.v1';
+  const LEGACY_KEY = 'vibecode.forum.v1';
   const HOUR = 3600e3;
   const DAY = 86400e3;
 
-  const CATS = [
+  /* the staff account — these credentials always sign you in with command access */
+  const ADMIN_EMAIL = 'admin@admin.com';
+  const ADMIN_PASS = 'admin99';
+
+  const COMMUNITIES = [
     { id: 'announcements', name: 'Announcements',  icon: '📢', desc: 'News and updates from the team' },
     { id: 'general',       name: 'General',        icon: '💬', desc: 'Anything worth talking about' },
     { id: 'help',          name: 'Help & Support', icon: '🛠️', desc: 'Ask questions, get unstuck' },
@@ -19,10 +23,10 @@
   ];
 
   const SORTS = [
-    { id: 'active',    label: 'Recent activity' },
-    { id: 'new',       label: 'Newest' },
-    { id: 'top',       label: 'Most liked' },
-    { id: 'discussed', label: 'Most discussed' },
+    { id: 'hot',    label: 'Hot',    icon: '🔥' },
+    { id: 'new',    label: 'New',    icon: '🕒' },
+    { id: 'top',    label: 'Top',    icon: '🏆' },
+    { id: 'rising', label: 'Rising', icon: '📈' },
   ];
 
   /* ---------------- helpers ---------------- */
@@ -51,92 +55,137 @@
     return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   }
 
+  const fmtNum = (n) =>
+    Math.abs(n) >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n);
+
   const avatar = (u, size = 36) => {
+    const style = `--h:${hue(u ? u.id : 'x')};width:${size}px;height:${size}px`;
+    if (u && u.pfp) {
+      if (/^data:image\//.test(u.pfp)) {
+        return `<span class="avatar has-img" style="${style}"><img src="${esc(u.pfp)}" alt="" /></span>`;
+      }
+      return `<span class="avatar pfp" style="${style};font-size:${Math.round(size * 0.55)}px">${esc(u.pfp)}</span>`;
+    }
     const init = String(u ? u.name : '?').trim().split(/\s+/).slice(0, 2)
       .map((w) => w[0].toUpperCase()).join('') || '?';
-    return `<span class="avatar" style="--h:${hue(u ? u.id : 'x')};width:${size}px;height:${size}px;font-size:${Math.round(size * 0.37)}px">${esc(init)}</span>`;
+    return `<span class="avatar" style="${style};font-size:${Math.round(size * 0.37)}px">${esc(init)}</span>`;
   };
+
+  const tagHue = (t) => {
+    let h = 0;
+    for (const ch of String(t)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+    return h;
+  };
+  const tagChip = (t) => `<span class="tag" style="--tagh:${tagHue(t)}">#${esc(t)}</span>`;
+
+  /* local credential helpers — salted, iterated digest (accounts live on this device) */
+  const normEmail = (v) => String(v || '').trim().toLowerCase();
+
+  function hashPass(password, salt) {
+    const input = salt + ' ' + password;
+    let h1 = 0x811c9dc5, h2 = 0x1000193;
+    for (let round = 0; round < 512; round++) {
+      for (let i = 0; i < input.length; i++) {
+        const c = input.charCodeAt(i) + round;
+        h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+        h2 = Math.imul(h2 + c, 0x85ebca6b) >>> 0;
+        h2 = (h2 ^ (h2 >>> 13)) >>> 0;
+      }
+    }
+    return ('00000000' + h1.toString(16)).slice(-8) + ('00000000' + h2.toString(16)).slice(-8);
+  }
+
+  function authError(msg) {
+    const box = $('#authErr');
+    if (!box) return;
+    box.textContent = msg;
+    box.classList.remove('shake');
+    void box.offsetWidth;
+    box.classList.add('shake');
+  }
 
   const paragraphs = (text) => String(text)
     .split(/\n{2,}/)
     .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
     .join('');
 
+  const plain = (text) => String(text).replace(/\s+/g, ' ').trim();
+
   /* ---------------- seed / storage ---------------- */
 
   function seed() {
     const now = Date.now();
     const users = {};
-    const addUser = (id, name, joined) => (users[id] = { id, name, joined });
+    const addUser = (id, name, joined, bio) => (users[id] = { id, name, joined, bio, pfp: '' });
 
-    addUser('u_mira', 'Mira Chen',  now - 90 * DAY);
-    addUser('u_ada',  'Ada Lovelace', now - 60 * DAY);
-    addUser('u_theo', 'Theo Park',  now - 31 * DAY);
-    addUser('u_nova', 'Nova Reyes', now - 22 * DAY);
-    addUser('u_sam',  'Sam Okafor', now - 9 * DAY);
+    addUser('u_mira', 'Mira Chen',    now - 90 * DAY, 'Keeper of the keys. I write the changelog so you do not have to.');
+    addUser('u_ada',  'Ada Lovelace', now - 60 * DAY, 'Prompt archaeologist. Ask me anything about exit codes.');
+    addUser('u_theo', 'Theo Park',    now - 31 * DAY, 'Automating myself out of one job and into the next.');
+    addUser('u_nova', 'Nova Reyes',   now - 22 * DAY, 'Two-hundred-lines-or-less enthusiast. Ships small, ships often.');
+    addUser('u_sam',  'Sam Okafor',   now - 9 * DAY,  'If it can be a shell function, I have already made it one.');
 
     const t = (o) => Object.assign({
-      id: uid('t'), likes: [], replies: [], tags: [], created: now - DAY,
+      id: uid('t'), up: [], down: [], replies: [], tags: [], created: now - DAY,
     }, o);
-    const r = (o) => Object.assign({ id: uid('r'), likes: [], parent: null, created: now - HOUR }, o);
+    const r = (o) => Object.assign({ id: uid('r'), up: [], down: [], parent: null, created: now - HOUR }, o);
 
     const threads = [
       t({
-        title: 'Welcome to the Vibecode forum 👋',
+        title: 'Welcome to bashForum 👋',
         cat: 'announcements', author: 'u_mira', tags: ['meta'], created: now - 6 * DAY,
-        body: 'Glad you are here!\n\nThis forum runs **entirely in your browser**: there is no server, no database and no account to create. Everything you post is saved to `localStorage` on this device.\n\nA few things to know:\n\nPick a display name when prompted — it is only stored locally.\nThreads, replies and likes persist across reloads.\nThere is a "Reset demo data" button in the sidebar if you want a clean slate.\n\nBe kind, stay curious, and post the thing you were about to close the tab on.',
-        likes: ['u_ada', 'u_theo', 'u_nova', 'u_sam'],
+        body: 'Glad you are here!\n\nbashForum is a place to talk shell: configs, scripts, prompts, and the tiny ergonomics that make a terminal feel like home.\n\nA few ground rules:\n\nBe kind — every expert was once confused by `grep`.\nSearch before posting; your answer may already be one thread over.\nKeep it on topic-ish. Off-Topic exists for a reason.\nHave fun, and post the snippet you were about to close the tab on.',
+        up: ['u_ada', 'u_theo', 'u_nova', 'u_sam'],
         replies: [
-          r({ author: 'u_ada', created: now - 5 * DAY, likes: ['u_mira'],
-              body: 'Love that this needs zero setup. Opened the page and started typing — that is how it should feel.' }),
-          r({ author: 'u_theo', created: now - 4 * DAY,
-              body: 'Coming from three different hosted forums, a local-only sandbox is a nice change of pace for prototyping discussion UIs.' }),
+          r({ author: 'u_ada', created: now - 5 * DAY, up: ['u_mira'],
+              body: 'Finally, a place to admit how many hours I have spent on my prompt alone.' }),
+          r({ author: 'u_theo', created: now - 4 * DAY, up: ['u_mira', 'u_nova'],
+              body: 'Subscribed. Today I open-sourced my 400-line git helper, one alias at a time.' }),
         ],
       }),
       t({
-        title: 'What are you building this week?',
+        title: "What's in your .bashrc that you can't live without?",
         cat: 'general', author: 'u_ada', created: now - 2 * DAY, tags: ['weekly'],
-        body: 'Weekly check-in thread. Small counts.\n\nI am rewriting my RSS reader so it does not re-layout every time a feed refreshes. Currently stuck on a CSS containment rabbit hole.',
-        likes: ['u_mira', 'u_nova'],
+        body: 'Weekly check-in thread. Small confessions.\n\nMine: a `mkcd` alias, and a prompt segment that shows the exit code of the last command. I fixed more bugs with that one line than any linter ever caught.',
+        up: ['u_mira', 'u_nova', 'u_sam'],
         replies: [
-          r({ author: 'u_nova', created: now - 40 * HOUR,
-              body: 'A pomodoro timer in vanilla JS. Two hundred lines, no dependencies, suspiciously satisfying to use.' }),
-          r({ author: 'u_sam', created: now - 30 * HOUR, likes: ['u_ada'],
-              body: 'Terminal theme picker. Twelve colors, one config file, far too many hours spent on contrast ratios.' }),
-          r({ author: 'u_ada', created: now - 26 * HOUR, parent: null, likes: [],
-              body: 'Twelve colors is a lifestyle, not a bug.' }),
+          r({ author: 'u_nova', created: now - 40 * HOUR, up: ['u_ada', 'u_mira'],
+              body: 'fzf-backed history search. I stopped typing full commands weeks ago — the arrow key feels antique now.' }),
+          r({ author: 'u_sam', created: now - 30 * HOUR, up: ['u_ada'],
+              body: 'A `serve` alias that spins up a static file server in whatever directory I am standing in.' }),
+          r({ author: 'u_ada', created: now - 26 * HOUR, parent: null,
+              body: 'Twelve aliases for the same tar command is a lifestyle, not a bug.' }),
         ],
       }),
       t({
-        title: 'Why does my saved data disappear in private browsing?',
-        cat: 'help', author: 'u_theo', created: now - 19 * HOUR, tags: ['storage'],
-        body: 'Everything works in a normal tab, but after I close the private window my posts are gone.\n\nAm I holding localStorage wrong, or is this expected behaviour?',
-        likes: ['u_sam'],
+        title: 'Why does my alias work now but vanish in new terminal sessions?',
+        cat: 'help', author: 'u_theo', created: now - 19 * HOUR, tags: ['shell'],
+        body: 'I add an alias, it works immediately, then it is gone the next morning.\n\nAm I putting it in the wrong file? I bounce between `.bashrc` and `.bash_profile` and I have lost track of which one my login shell actually reads.',
+        up: ['u_sam', 'u_mira'],
         replies: [
-          r({ author: 'u_mira', created: now - 17 * HOUR, likes: ['u_theo', 'u_sam'],
-              body: 'Expected. Private windows throw away storage when the session ends — that is the whole point of them.\n\nFor a local-only app the usual fix is to detect the failure: wrap your writes in try/catch, and if they throw, tell the user their data will not survive the session.' }),
-          r({ author: 'u_sam', created: now - 15 * HOUR,
-              body: 'Also worth knowing: Safari blocks storage entirely in some modes, so never assume a write succeeded just because the call returned.' }),
+          r({ author: 'u_mira', created: now - 17 * HOUR, up: ['u_theo', 'u_sam', 'u_nova'],
+              body: 'Classic split: interactive shells read `.bashrc`, login shells read `.bash_profile`.\n\nPut this at the top of `.bash_profile` and you only ever maintain one file:\n\n[[ -f ~/.bashrc ]] && . ~/.bashrc' }),
+          r({ author: 'u_sam', created: now - 15 * HOUR, up: ['u_theo'],
+              body: 'Also worth knowing: aliases do not expand in non-interactive scripts. That is what functions are for — they work everywhere.' }),
         ],
       }),
       t({
-        title: 'Shipped: a Pomodoro timer in 200 lines of vanilla JS',
-        cat: 'showcase', author: 'u_nova', created: now - 3 * DAY, tags: ['javascript', 'tiny'],
-        body: 'No framework, no build step, one HTML file. It does four things: start, pause, reset, and an obnoxious chime when the session ends.\n\nThe trick that made it feel finished was animating the ring with `stroke-dashoffset` instead of faking progress with JavaScript timers.',
-        likes: ['u_ada', 'u_mira', 'u_theo', 'u_sam'],
+        title: 'Shipped: a 200-line pomodoro timer in pure bash',
+        cat: 'showcase', author: 'u_nova', created: now - 3 * DAY, tags: ['bash', 'tiny'],
+        body: 'No dependencies beyond `sleep` and a chime from `printf "\\a"`. It does four things: start, pause, reset, and interrupt you when the session ends.\n\nThe surprisingly hard part was making Ctrl-C behave — trapping signals so a stray keystroke does not leave a zombie timer counting down in the background.',
+        up: ['u_ada', 'u_mira', 'u_theo', 'u_sam'],
         replies: [
-          r({ author: 'u_sam', created: now - 2 * DAY, likes: ['u_nova'],
-              body: 'The SVG ring detail is what makes it. Timers without any visual feedback always feel broken.' }),
+          r({ author: 'u_sam', created: now - 2 * DAY, up: ['u_nova', 'u_ada'],
+              body: 'The signal trapping is the whole craft. Mine still only dies gracefully-ish, but it dies on purpose.' }),
         ],
       }),
       t({
-        title: 'Favourite keyboard switches for long coding sessions?',
+        title: 'Favourite terminal colour schemes for long sessions?',
         cat: 'offtopic', author: 'u_sam', created: now - 30 * HOUR,
-        body: 'Currently on tactile browns and my fingers are staging a revolt after hour six.\n\nConvince me: linear, tactile, or clicky — and does anyone actually enjoy writing on a laptop keyboard?',
-        likes: ['u_theo'],
+        body: 'My current theme is doing my eyes in after hour six.\n\nConvince me: solarized, gruvbox, or one of the sixteen-colour classics — and does anyone actually code on the default black-on-white?',
+        up: ['u_theo'],
         replies: [
-          r({ author: 'u_theo', created: now - 22 * HOUR,
-              body: 'Silent linears. My neighbours have voted, unanimously, in my favour.' }),
+          r({ author: 'u_theo', created: now - 22 * HOUR, up: ['u_sam'],
+              body: 'Low-contrast gruvbox. My eyes and my night-owl schedule finally reached an accord.' }),
         ],
       }),
     ];
@@ -145,53 +194,307 @@
       version: 1,
       users,
       threads,
+      accounts: {},
       currentUserId: null,
       prefs: { named: false, theme: document.documentElement.dataset.theme || 'dark' },
     };
   }
 
-  function load() {
-    try {
-      const raw = localStorage.getItem(KEY);
-      if (raw) {
-        const d = JSON.parse(raw);
-        if (d && Array.isArray(d.threads) && d.users) return d;
+  /* upgrade data written by an earlier version of the app */
+  function migrate(d) {
+    if (!d || !Array.isArray(d.threads)) return null;
+    const fix = (item) => {
+      if (!Array.isArray(item.up)) {
+        item.up = Array.isArray(item.likes) ? item.likes.slice() : [];
       }
-    } catch (e) { /* corrupted or unavailable storage — fall through to seed */ }
-    const fresh = seed();
-    try { localStorage.setItem(KEY, JSON.stringify(fresh)); } catch (e) {}
+      if (!Array.isArray(item.down)) item.down = [];
+      delete item.likes;
+    };
+    d.threads.forEach((th) => { fix(th); th.replies.forEach(fix); });
+    Object.values(d.users || {}).forEach((u) => {
+      if (typeof u.joined !== 'number') u.joined = Date.now();
+    });
+    d.prefs = d.prefs || { named: false };
+    d.accounts = (d.accounts && typeof d.accounts === 'object') ? d.accounts : {};
+    return defaults(d);
+  }
+
+  /* every field the moderation layer reads is guaranteed to exist */
+  function defaults(d) {
+    d.audit = Array.isArray(d.audit) ? d.audit : [];
+    d.banner = typeof d.banner === 'string' && d.banner ? d.banner : null;
+    d.maintenance = !!d.maintenance;
+    d.plugins = (d.plugins && typeof d.plugins === 'object') ? d.plugins : {};
+    d.cats = Array.isArray(d.cats) ? d.cats : [];
+    d.catState = (d.catState && typeof d.catState === 'object') ? d.catState : {};
+    d.catOrder = Array.isArray(d.catOrder) ? d.catOrder : [];
+    d.lastStats = d.lastStats || null;
+    d.lastIndexed = d.lastIndexed || null;
+    Object.values(d.users || {}).forEach((u) => {
+      u.warnings = Array.isArray(u.warnings) ? u.warnings : [];
+      if (u.role == null) u.role = '';
+      if (u.rank == null) u.rank = '';
+      u.verified = !!u.verified;
+      u.muffled = !!u.muffled;
+      u.banned = !!u.banned;
+      u.suspended = !!u.suspended;
+      u.bannedUntil = typeof u.bannedUntil === 'number' ? u.bannedUntil : 0;
+      if (u.banReason == null) u.banReason = '';
+    });
+    (d.threads || []).forEach((t) => {
+      t.reports = Array.isArray(t.reports) ? t.reports : [];
+      t.locked = !!t.locked; t.pinned = !!t.pinned; t.featured = !!t.featured;
+      t.hidden = !!t.hidden; t.deleted = !!t.deleted;
+      (t.replies || []).forEach((r) => {
+        r.reports = Array.isArray(r.reports) ? r.reports : [];
+        r.hidden = !!r.hidden; r.deleted = !!r.deleted;
+      });
+    });
+    return d;
+  }
+
+  /* make sure the staff sign-in always exists and always works */
+  function ensureAdmin() {
+    const existing = db.accounts[ADMIN_EMAIL];
+    let target = (existing && db.users[existing.userId]) ||
+      Object.values(db.users).find((x) => x.role === 'admin') || null;
+    if (!target) {
+      const id = uid('u_admin');
+      target = { id, name: 'Forum Admin', joined: Date.now(), bio: 'Staff account.', pfp: '', role: 'admin' };
+      db.users[id] = target;
+    }
+    target.role = 'admin';
+    target.banned = false;
+    target.suspended = false;
+    target.bannedUntil = 0;
+    target.muffled = false;
+    const keepSalt = existing && existing.hash === hashPass(ADMIN_PASS, existing.salt) && existing.salt;
+    const salt = keepSalt || uid('s');
+    db.accounts[ADMIN_EMAIL] = {
+      email: ADMIN_EMAIL,
+      salt,
+      hash: hashPass(ADMIN_PASS, salt),
+      userId: target.id,
+      created: (existing && existing.created) || Date.now(),
+    };
+    defaults(db);
+  }
+
+  function load() {
+    for (const key of [KEY, LEGACY_KEY]) {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const d = migrate(JSON.parse(raw));
+          if (d && d.users) {
+            if (key !== KEY) save(d); // keep the current key canonical
+            return d;
+          }
+        }
+      } catch (e) { /* corrupted data — fall through */ }
+    }
+    const fresh = defaults(seed());
+    save(fresh);
     return fresh;
   }
 
-  function save() {
+  let db = load();
+
+  function save(data) {
     try {
-      localStorage.setItem(KEY, JSON.stringify(db));
+      localStorage.setItem(KEY, JSON.stringify(data || db));
     } catch (e) {
-      toast('⚠️ Could not save — browser storage is unavailable');
+      toast('⚠️ Could not save your changes');
     }
   }
 
-  /* ---------------- state ---------------- */
-
-  let db = load();
-
-  // guarantee a current user
-  if (!db.currentUserId || !db.users[db.currentUserId]) {
-    const id = uid('u');
-    db.users[id] = { id, name: 'Guest ' + Math.floor(1000 + Math.random() * 9000), joined: Date.now() };
-    db.currentUserId = id;
-    db.prefs = db.prefs || { named: false };
-    save();
-  }
+  /* a signed-out visitor starts with no session until they sign in */
+  if (db.currentUserId && !db.users[db.currentUserId]) db.currentUserId = null;
   db.prefs = db.prefs || { named: false };
+  db.accounts = (db.accounts && typeof db.accounts === 'object') ? db.accounts : {};
+  ensureAdmin();
+
+  /* ---------------- state helpers ---------------- */
 
   const ui = { draft: '', replyTo: null, lastPath: null };
   const me = () => db.users[db.currentUserId];
   const user = (id) => db.users[id] || { id, name: 'Deleted user', joined: Date.now() };
-  const cat = (id) => CATS.find((c) => c.id === id) || { id, name: id, icon: '•', desc: '' };
+  const community = (id) => allCats().find((c) => c.id === id) ||
+    { id, name: id, icon: '•', desc: '', locked: false };
   const thread = (id) => db.threads.find((t) => t.id === id);
-  const lastActivity = (t) =>
-    t.replies.reduce((max, r) => Math.max(max, r.created), t.created);
+  const lastActivity = (t) => t.replies.reduce((max, r) => Math.max(max, r.created), t.created);
+
+  const score = (item) => (item.up ? item.up.length : 0) - (item.down ? item.down.length : 0);
+  const voteState = (item) => {
+    if (item.up && item.up.includes(db.currentUserId)) return 'up';
+    if (item.down && item.down.includes(db.currentUserId)) return 'down';
+    return '';
+  };
+  const ageHours = (item) => (Date.now() - item.created) / HOUR;
+  const hotRank = (item) => score(item) / Math.pow(ageHours(item) + 2, 0.75);
+
+  function stats(id) {
+    let k = 0, up = 0, down = 0, posts = 0, comments = 0;
+    db.threads.forEach((t) => {
+      if (t.author === id) {
+        posts++; k += score(t);
+        up += (t.up || []).length; down += (t.down || []).length;
+      }
+      (t.replies || []).forEach((r) => {
+        if (r.author === id) {
+          comments++; k += score(r);
+          up += (r.up || []).length; down += (r.down || []).length;
+        }
+      });
+    });
+    return {
+      karma: k, posts, comments,
+      rating: up + down ? Math.round((up / (up + down)) * 100) : null,
+    };
+  }
+  const karma = (id) => stats(id).karma;
+
+  /* ---------------- moderation state ---------------- */
+
+  const isAdmin = () => { const u = me(); return !!u && u.role === 'admin'; };
+  const isStaff = () => { const u = me(); return !!u && (u.role === 'admin' || u.role === 'mod'); };
+  const myGroup = () => (me() && me().role) || 'member';
+
+  const allCats = () => {
+    const merged = COMMUNITIES.concat(db.cats).map(
+      (c) => Object.assign({}, c, db.catState[c.id] || {}));
+    if (!db.catOrder.length) return merged;
+    const pos = (id) => { const i = db.catOrder.indexOf(id); return i < 0 ? 1e9 : i; };
+    return merged.slice().sort((a, b) => pos(a.id) - pos(b.id));
+  };
+
+  const canRead = (catId) => {
+    if (isAdmin()) return true;
+    const st = db.catState[catId] || {};
+    return (st.perms && st.perms[myGroup()]) !== 'none';
+  };
+
+  const canWrite = (catId) => {
+    if (isAdmin()) return true;
+    const st = db.catState[catId] || {};
+    return ((st.perms && st.perms[myGroup()]) || 'write') === 'write';
+  };
+
+  const catLocked = (catId) => !!(db.catState[catId] || {}).locked;
+  const canPost = (catId) => canWrite(catId) && (isStaff() || !catLocked(catId));
+  const canReplyTo = (t) => !!t && canWrite(t.cat) && (isStaff() || !t.locked);
+
+  /* why an account can't sign in or post right now — null when it's fine */
+  function statusOf(u) {
+    if (!u) return null;
+    if (u.banned) {
+      return { kind: 'banned', msg: u.banReason
+        ? 'This account is banned — ' + u.banReason
+        : 'This account was banned by moderators.' };
+    }
+    if (u.suspended) {
+      return { kind: 'suspended', msg: 'This account is frozen while staff finish a review.' };
+    }
+    if (u.bannedUntil && u.bannedUntil > Date.now()) {
+      return { kind: 'tempban', msg: 'This account is suspended until ' +
+        new Date(u.bannedUntil).toLocaleString() + '.' };
+    }
+    return null;
+  }
+
+  const badges = (u) => {
+    if (!u) return '';
+    let s = '';
+    if (u.verified) s += `<span class="badge verified" title="Verified">✓</span>`;
+    if (u.role === 'admin') s += `<span class="badge role admin" title="Administrator">admin</span>`;
+    else if (u.role === 'mod') s += `<span class="badge role mod" title="Moderator">mod</span>`;
+    if (u.rank) s += `<span class="badge rank" title="Rank">${esc(u.rank)}</span>`;
+    return s;
+  };
+
+  const stChips = (item) => {
+    let s = '';
+    if (item.pinned) s += `<span class="st-chip pin" title="Pinned">📌 pinned</span>`;
+    if (item.featured) s += `<span class="st-chip feat" title="Featured">⭐ featured</span>`;
+    if (item.locked) s += `<span class="st-chip lock" title="Locked">🔒 locked</span>`;
+    if (item.hidden) s += `<span class="st-chip hid" title="Hidden">🙈 hidden</span>`;
+    if (item.deleted) s += `<span class="st-chip del" title="Deleted">🗑 deleted</span>`;
+    return s;
+  };
+
+  /* finders the moderation console leans on */
+  const findUser = (key) => {
+    const k = String(key || '').trim();
+    if (!k) return null;
+    if (db.users[k]) return db.users[k];
+    const nk = k.toLowerCase();
+    const exact = Object.values(db.users).find((x) => x.name.toLowerCase() === nk);
+    if (exact) return exact;
+    const loose = Object.values(db.users).filter((x) => x.name.toLowerCase().includes(nk));
+    return loose.length === 1 ? loose[0] : null;
+  };
+
+  const findThreadAny = (key) => {
+    const k = String(key || '').trim();
+    if (!k) return null;
+    const exact = db.threads.find((t) => t.id === k);
+    if (exact) return exact;
+    const hits = db.threads.filter((t) => t.id.startsWith(k));
+    return hits.length === 1 ? hits[0] : null;
+  };
+
+  const findReplyAny = (key) => {
+    const k = String(key || '').trim();
+    if (!k) return null;
+    let exact = null;
+    const hits = [];
+    db.threads.forEach((t) => t.replies.forEach((r) => {
+      if (r.id === k) exact = { t, r };
+      else if (r.id.startsWith(k)) hits.push({ t, r });
+    }));
+    return exact || (hits.length === 1 ? hits[0] : null);
+  };
+
+  const findItem = (key) => {
+    const t = findThreadAny(key);
+    if (t) return { kind: 'thread', t };
+    const f = findReplyAny(key);
+    if (f) return { kind: 'reply', t: f.t, r: f.r };
+    return null;
+  };
+
+  const findCat = (key) => {
+    const k = String(key || '').trim().toLowerCase().replace(/^~\/?/, '');
+    if (!k) return null;
+    const list = allCats();
+    return list.find((c) => c.id.toLowerCase() === k) ||
+      list.find((c) => c.name.toLowerCase() === k) ||
+      list.find((c) => c.id.toLowerCase().startsWith(k)) ||
+      list.find((c) => c.name.toLowerCase().startsWith(k)) ||
+      null;
+  };
+
+  const parseDur = (s) => {
+    const m = String(s || '').trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*([a-z]+)?$/);
+    if (!m) return 0;
+    const units = {
+      s: 1e3, sec: 1e3, secs: 1e3, second: 1e3, seconds: 1e3,
+      m: 60e3, min: 60e3, mins: 60e3, minute: 60e3, minutes: 60e3,
+      h: HOUR, hr: HOUR, hrs: HOUR, hour: HOUR, hours: HOUR,
+      d: DAY, day: DAY, days: DAY, w: 7 * DAY, week: 7 * DAY, weeks: 7 * DAY,
+    };
+    const mult = units[m[2] || 'd'];
+    return mult ? Math.round(parseFloat(m[1]) * mult) : 0;
+  };
+
+  /* staff actions are recorded for /viewlogs */
+  function audit(cmd, detail) {
+    db.audit.unshift({
+      at: Date.now(), by: db.currentUserId || 'system',
+      cmd, detail: String(detail || '').slice(0, 160),
+    });
+    if (db.audit.length > 400) db.audit.length = 400;
+  }
 
   /* ---------------- routing ---------------- */
 
@@ -210,86 +513,191 @@
 
   window.addEventListener('hashchange', render);
 
-  /* ---------------- sidebar + header ---------------- */
-
-  function renderSidebar(params) {
-    const active = params.get('cat');
-    const counts = {};
-    CATS.forEach((c) => (counts[c.id] = 0));
-    db.threads.forEach((t) => { if (counts[t.cat] != null) counts[t.cat]++; });
-    const posts = db.threads.reduce((n, t) => n + 1 + t.replies.length, 0);
-    const members = Object.keys(db.users).length;
-
-    $('#sidebar').innerHTML = `
-      <nav class="side-nav">
-        <a class="side-link ${!active ? 'active' : ''}" href="#/">
-          <span class="side-icon">🌐</span><span class="side-label">All threads</span>
-          <span class="side-count">${db.threads.length}</span>
-        </a>
-      </nav>
-
-      <div class="side-title">Categories</div>
-      <nav class="side-nav">
-        ${CATS.map((c) => `
-          <a class="side-link ${active === c.id ? 'active' : ''}" href="#/?cat=${c.id}">
-            <span class="side-icon">${c.icon}</span>
-            <span class="side-label">${c.name}</span>
-            <span class="side-count">${counts[c.id]}</span>
-          </a>`).join('')}
-      </nav>
-
-      <div class="side-card">
-        <div class="side-card-title">💬 Local-only forum</div>
-        <p>Nothing leaves this browser — posts live in <code>localStorage</code>.</p>
-        <div class="mini-stats">
-          <div><b>${db.threads.length}</b><span>threads</span></div>
-          <div><b>${posts}</b><span>posts</span></div>
-          <div><b>${members}</b><span>members</span></div>
-        </div>
-        <button class="btn btn-ghost btn-sm btn-block" data-action="reset">Reset demo data</button>
-      </div>`;
-  }
+  /* ---------------- chrome ---------------- */
 
   function renderHeader() {
     const u = me();
-    $('#userChip').innerHTML = avatar(u, 26) + `<span>${esc(u.name)}</span>`;
-    const theme = document.documentElement.dataset.theme;
-    $('#themeBtn').textContent = theme === 'light' ? '🌙' : '☀️';
+    $('#userChip').innerHTML = u
+      ? avatar(u, 26) +
+        `<span class="name">${esc(u.name)}</span>` +
+        (u.role ? `<span class="badge role ${esc(u.role)}" title="${u.role === 'admin' ? 'Administrator' : 'Moderator'}">${esc(u.role)}</span>` : '') +
+        `<span class="karma" title="karma">${fmtNum(karma(u.id))}</span>`
+      : `<span class="name">Sign in</span>`;
+    $('#themeBtn').textContent = document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️';
   }
 
-  /* ---------------- views ---------------- */
+  function renderNavCats(q, path) {
+    const catId = q.get('cat');
+    const counts = {};
+    allCats().forEach((c) => (counts[c.id] = 0));
+    db.threads.forEach((t) => { if (counts[t.cat] != null) counts[t.cat]++; });
+    const onFeed = path === '/' || path === '';
 
-  function threadRow(t) {
-    const c = cat(t.cat);
-    const a = user(t.author);
-    const n = t.replies.length;
+    $('#navCats').innerHTML = `
+      <a class="nav-cat ${onFeed && !catId ? 'active' : ''}" href="#/" title="All posts">
+        🌐 All <span class="nav-count">${db.threads.length}</span></a>
+      ${allCats().map((c) => `
+        <a class="nav-cat ${onFeed && catId === c.id ? 'active' : ''}" href="#/?cat=${c.id}"
+           title="${esc(c.name)}">${c.icon} ${c.name} <span class="nav-count">${counts[c.id]}</span></a>`).join('')}`;
+  }
+
+  function renderAbout() {
+    const posts = db.threads.length;
+    const comments = db.threads.reduce((n, t) => n + t.replies.length, 0);
+    const members = Object.keys(db.users).length;
+    const counts = {};
+    allCats().forEach((c) => (counts[c.id] = 0));
+    db.threads.forEach((t) => { if (counts[t.cat] != null) counts[t.cat]++; });
+
+    $('#main').innerHTML = `
+      <section class="card about-hero">
+        <div class="about-logo">&gt;_</div>
+        <h1>bashForum</h1>
+        <p class="tagline">A community for shell tinkerers, script addicts and prompt customizers — share configs, trade aliases, debug together.</p>
+        <div class="about-stats">
+          <div><b>${fmtNum(members)}</b><span>Members</span></div>
+          <div><b>${fmtNum(posts)}</b><span>Posts</span></div>
+          <div><b>${fmtNum(comments)}</b><span>Comments</span></div>
+        </div>
+      </section>
+
+      <div class="about-grid">
+        <section class="card about-sec">
+          <h3>ℹ️ About this forum</h3>
+          <p>bashForum is a place to talk shell: dotfiles, scripts, prompts and the tiny ergonomics that make a terminal feel like home. Post a question, share a snippet, or just lurk — every community below is open.</p>
+          <div class="comm-list">
+            ${allCats().map((c) => `
+              <a class="comm-item" href="#/?cat=${c.id}">
+                <span class="ci-icon">${c.icon}</span>
+                <span>
+                  <span class="ci-name">~/${c.id}</span><br>
+                  <span class="ci-desc">${esc(c.desc)}</span>
+                </span>
+                <span class="ci-count">${counts[c.id]}</span>
+              </a>`).join('')}
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">Forum Rules</div>
+          <ol class="rules">
+            <li><b>Be kind.</b> Every expert was once confused by <code>grep</code>.</li>
+            <li><b>Search first.</b> Your answer may already be one thread over.</li>
+            <li><b>Show your work.</b> Paste the command, the output and what you expected.</li>
+            <li><b>No spam.</b> Share code and context, not links for links' sake.</li>
+            <li><b>Keep it terminal-adjacent.</b> Off-Topic exists for the rest.</li>
+          </ol>
+        </section>
+      </div>
+
+      <section class="card credits">
+        <div class="card-head">Credits</div>
+        <div class="made-by">Made by</div>
+        <div class="credit-badge">
+          <span class="cb-mark">&gt;_</span>
+          <span class="cb-name">Tanishq Lalwani<span>Design &amp; Development</span></span>
+        </div>
+        <p class="credit-note">bashForum was designed and built from scratch — interface, styling and everything in between. Thanks for hanging out in our corner of the terminal.</p>
+        <button class="btn btn-ghost btn-sm" data-action="reset">Reset forum</button>
+        <div class="about-foot">bashForum — talk shell. © 2026</div>
+      </section>`;
+  }
+
+  /* ---------------- feed ---------------- */
+
+  function voteColumn(item, kind, tid) {
+    const v = voteState(item);
+    const s = score(item);
+    const idAttr = kind === 'thread' ? `data-id="${item.id}"` : `data-id="${item.id}" data-tid="${tid}"`;
     return `
-      <article class="thread">
-        ${avatar(a, 40)}
-        <div class="thread-main">
-          <div class="thread-title"><a href="#/t/${t.id}">${esc(t.title)}</a></div>
-          <div class="thread-meta">
-            <span class="pill">${c.icon} ${esc(c.name)}</span>
-            <span>${esc(a.name)}</span>
+      <div class="vote-col">
+        <button class="vbtn up ${v === 'up' ? 'on' : ''}" data-action="vote" data-dir="up"
+                data-kind="${kind}" ${idAttr} title="Upvote" aria-label="Upvote">▲</button>
+        <span class="score ${s > 0 ? 'pos' : s < 0 ? 'neg' : ''}">${fmtNum(s)}</span>
+        <button class="vbtn down ${v === 'down' ? 'on' : ''}" data-action="vote" data-dir="down"
+                data-kind="${kind}" ${idAttr} title="Downvote" aria-label="Downvote">▼</button>
+      </div>`;
+  }
+
+  function miniVote(item, kind, tid) {
+    const v = voteState(item);
+    const s = score(item);
+    const idAttr = kind === 'thread' ? `data-id="${item.id}"` : `data-id="${item.id}" data-tid="${tid}"`;
+    return `
+      <span class="mini-vote">
+        <button class="mv up ${v === 'up' ? 'on' : ''}" data-action="vote" data-dir="up"
+                data-kind="${kind}" ${idAttr} title="Upvote" aria-label="Upvote">▲</button>
+        <b class="score ${s > 0 ? 'pos' : s < 0 ? 'neg' : ''}">${fmtNum(s)}</b>
+        <button class="mv down ${v === 'down' ? 'on' : ''}" data-action="vote" data-dir="down"
+                data-kind="${kind}" ${idAttr} title="Downvote" aria-label="Downvote">▼</button>
+      </span>`;
+  }
+
+  function postRow(t) {
+    const a = user(t.author);
+    const mine = t.author === db.currentUserId;
+    const excerpt = plain(t.body).slice(0, 240);
+    const canFlag = !!db.currentUserId && !mine;
+
+    return `
+      <article class="post-row" data-action="open" data-href="#/t/${t.id}">
+        ${voteColumn(t, 'thread')}
+        <div class="post-main">
+          <div class="post-meta">
+            <a class="comm-pill" href="#/?cat=${t.cat}" data-action="open" data-href="#/?cat=${t.cat}">~/${t.cat}</a>
+            <span class="dot">•</span>
+            <a class="author" href="#/user/${t.author}" data-action="open" data-href="#/user/${t.author}">${esc(a.name)}</a>${badges(a)}
             <span class="dot">•</span>
             <span>${fmtTime(t.created)}</span>
-            ${t.tags.map((tag) => `<span class="tag">#${esc(tag)}</span>`).join('')}
+            ${t.tags.map(tagChip).join('')}
+            ${stChips(t)}
           </div>
-        </div>
-        <div class="thread-stats">
-          <div class="stat"><b>${n}</b><span>${n === 1 ? 'reply' : 'replies'}</span></div>
-          <div class="stat"><b>${t.likes.length}</b><span>likes</span></div>
-          <div class="stat"><b>${fmtTime(lastActivity(t))}</b><span>activity</span></div>
+          <h2 class="post-title"><a href="#/t/${t.id}">${esc(t.title)}</a></h2>
+          <p class="excerpt">${esc(excerpt)}${t.body.length > 240 ? '…' : ''}</p>
+          <div class="post-foot">
+            <a class="foot-item" href="#/t/${t.id}" data-action="open" data-href="#/t/${t.id}">
+              💬 ${t.replies.length} ${t.replies.length === 1 ? 'Comment' : 'Comments'}
+            </a>
+            <button class="foot-item" data-action="share">⤴ Share</button>
+            ${canFlag ? `<button class="foot-item" data-action="report" data-kind="thread" data-id="${t.id}">⚑ Report</button>` : ''}
+            ${mine ? `<button class="foot-item danger" data-action="del-thread" data-id="${t.id}">Delete</button>` : ''}
+          </div>
         </div>
       </article>`;
   }
 
+  function leaderboardStrip() {
+    const top = Object.values(db.users)
+      .map((u) => ({ u, k: karma(u.id) }))
+      .sort((a, b) => b.k - a.k)
+      .slice(0, 3);
+    if (!top.length) return '';
+    return `
+      <section class="card lb-card">
+        <div class="card-head">🏆 Top members</div>
+        <div class="lb-row">
+          ${top.map((x, i) => `
+            <a class="lb-item" href="#/user/${x.u.id}">
+              <span class="lb-rank">#${i + 1}</span>
+              ${avatar(x.u, 26)}
+              <span class="lb-name">${esc(x.u.name)}</span>
+              <span class="lb-k">${fmtNum(x.k)} ✦</span>
+            </a>`).join('')}
+        </div>
+      </section>`;
+  }
+
+  /* ---------------- views ---------------- */
+
   function renderHome(params) {
     const catId = params.get('cat');
-    const sort = SORTS.some((s) => s.id === params.get('sort')) ? params.get('sort') : 'active';
+    const sort = SORTS.some((s) => s.id === params.get('sort')) ? params.get('sort') : 'hot';
     const q = (params.get('q') || '').trim().toLowerCase();
 
-    let list = db.threads.filter((t) => (catId ? t.cat === catId : true));
+    let list = db.threads.filter((t) =>
+      (catId ? t.cat === catId : true) &&
+      !t.deleted && (!t.hidden || isStaff()) && canRead(t.cat));
+
     if (q) {
       list = list.filter((t) =>
         t.title.toLowerCase().includes(q) ||
@@ -298,59 +706,78 @@
         t.replies.some((r) => r.body.toLowerCase().includes(q) || user(r.author).name.toLowerCase().includes(q)));
     }
 
-    const cmp = {
-      active:    (a, b) => lastActivity(b) - lastActivity(a),
-      new:       (a, b) => b.created - a.created,
-      top:       (a, b) => b.likes.length - a.likes.length || lastActivity(b) - lastActivity(a),
-      discussed: (a, b) => b.replies.length - a.replies.length || lastActivity(b) - lastActivity(a),
-    }[sort];
-    list = list.slice().sort(cmp);
+    if (sort === 'rising') list = list.filter((t) => ageHours(t) <= 72);
 
-    const c = catId ? cat(catId) : null;
+    const cmp = {
+      hot:    (a, b) => hotRank(b) - hotRank(a),
+      new:    (a, b) => b.created - a.created,
+      top:    (a, b) => score(b) - score(a) || lastActivity(b) - lastActivity(a),
+      rising: (a, b) => score(b) - score(a) || lastActivity(b) - lastActivity(a),
+    }[sort];
+    list = list.slice().sort((a, b) =>
+      ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) ||
+      ((b.featured ? 1 : 0) - (a.featured ? 1 : 0)) ||
+      cmp(a, b));
+
+    const c = catId ? community(catId) : null;
 
     const tabs = SORTS.map((s) => {
       const p = new URLSearchParams(params);
       p.set('sort', s.id);
-      return `<a class="tab ${sort === s.id ? 'active' : ''}" href="${homeHash(p)}">${s.label}</a>`;
+      return `<a class="tab ${sort === s.id ? 'active' : ''}" href="${homeHash(p)}">
+                <span>${s.icon}</span>${s.label}
+              </a>`;
     }).join('');
 
+    const promptCmd = q
+      ? `grep "${esc(params.get('q'))}" ./posts`
+      : c ? `cd ~/${c.id}` : 'welcome to bashForum';
+    const members = Object.keys(db.users).length;
+    const totalComments = db.threads.reduce((n, x) => n + x.replies.length, 0);
+
     $('#main').innerHTML = `
-      <div class="page-head">
-        <div>
-          <h1>${c ? `${c.icon} ${esc(c.name)}` : q ? `Search: “${esc(params.get('q'))}”` : 'All threads'}</h1>
-          <div class="sub">${c ? esc(c.desc) : `${list.length} thread${list.length === 1 ? '' : 's'} · sorted by ${SORTS.find((s) => s.id === sort).label.toLowerCase()}`}</div>
+      <section class="feed-hero">
+        <div class="hero-body">
+          <h1 class="hero-line"><span class="hero-prompt">❯</span>${promptCmd}<span class="caret">▍</span></h1>
+          <p class="hero-sub">${c
+            ? esc(c.desc)
+            : 'A community for shell tinkerers, script addicts and prompt customizers — share configs, trade aliases, debug together.'}</p>
+          <div class="hero-meta">
+            <span>👥 ${fmtNum(members)} members</span>
+            <span>📝 ${fmtNum(db.threads.length)} posts</span>
+            <span>💬 ${fmtNum(totalComments)} comments</span>
+            <a class="btn btn-primary btn-sm hero-cta" href="#/new">＋ New Post</a>
+          </div>
         </div>
-        <div class="spacer"></div>
-        <a class="btn btn-primary" href="#/new">+ New thread</a>
-      </div>
+      </section>
+
+      ${db.plugins.leaderboard ? leaderboardStrip() : ''}
 
       <div class="tabs">${tabs}</div>
 
       ${list.length
-        ? `<div class="thread-list">${list.map(threadRow).join('')}</div>`
+        ? `<div class="feed">${list.map(postRow).join('')}</div>`
         : `<div class="empty">
              <div class="big">🔍</div>
-             <h3>${q ? 'No matching threads' : 'Nothing here yet'}</h3>
-             <p>${q ? 'Try a different search term.' : 'Be the first to start a conversation in this category.'}</p>
-             <a class="btn btn-primary" href="#/new">Start a thread</a>
+             <h3>${q ? 'No results found' : sort === 'rising' ? 'Nothing is rising right now' : 'No posts yet'}</h3>
+             <p>${q ? 'Try a different search term.' : 'Be the first to post in this community.'}</p>
+             <a class="btn btn-primary" href="#/new">Create a post</a>
            </div>`}`;
   }
 
   function renderThread(id) {
     const t = thread(id);
-    if (!t) {
+    if (!t || ((t.deleted || t.hidden) && !isStaff())) {
       $('#main').innerHTML = `
-        <div class="empty"><div class="big">🕳️</div><h3>Thread not found</h3>
-        <p>It may have been deleted from this browser.</p>
-        <a class="btn btn-primary" href="#/">Back to the forum</a></div>`;
+        <div class="empty"><div class="big">🕳️</div><h3>Post not found</h3>
+        <p>It may have been removed.</p>
+        <a class="btn btn-primary" href="#/">Back to the feed</a></div>`;
       return;
     }
 
-    const c = cat(t.cat);
     const a = user(t.author);
-    const liked = t.likes.includes(db.currentUserId);
+    const mine = t.author === db.currentUserId;
 
-    // group replies by parent
     const byParent = {};
     t.replies.forEach((r) => {
       const key = r.parent || 'root';
@@ -358,131 +785,162 @@
     });
     Object.values(byParent).forEach((arr) => arr.sort((x, y) => x.created - y.created));
 
-    const renderReply = (r, depth) => {
+    const renderComment = (r) => {
       const ru = user(r.author);
-      const rLiked = r.likes.includes(db.currentUserId);
       const kids = byParent[r.id] || [];
-      const mine = r.author === db.currentUserId;
+      const own = r.author === db.currentUserId;
+
+      if (r.deleted && !isStaff()) return '';
+
+      if (r.hidden && !isStaff()) {
+        return `
+          <div class="comment hidden-note" id="reply-${r.id}">
+            <div class="c-head">
+              ${avatar(ru, 22)}
+              <b>${esc(ru.name)}</b>${badges(ru)}
+              <span class="when">· hidden</span>
+            </div>
+            <div class="c-hidden">🙈 This comment was hidden by moderators.</div>
+            ${kids.length ? `<div class="c-kids">${kids.map(renderComment).join('')}</div>` : ''}
+          </div>`;
+      }
+
       return `
-        <div class="reply ${depth ? 'nested' : ''}" id="reply-${r.id}">
-          <div class="reply-head">
-            ${avatar(ru, 26)}
-            <b>${esc(ru.name)}</b>
-            <span class="when">${fmtTime(r.created)}</span>
-            <span class="spacer"></span>
-            <button class="like-btn ${rLiked ? 'liked' : ''}" data-action="like"
-                    data-kind="reply" data-id="${r.id}" data-tid="${t.id}" title="Like this reply">
-              <span class="heart">♥</span> ${r.likes.length}
-            </button>
+        <div class="comment" id="reply-${r.id}">
+          <div class="c-head">
+            ${avatar(ru, 22)}
+            <a class="author" href="#/user/${r.author}">${esc(ru.name)}</a>${badges(ru)}
+            <span class="when">· ${fmtTime(r.created)}</span>
+            ${stChips(r)}
+            ${miniVote(r, 'reply', t.id)}
           </div>
-          <div class="reply-body">${paragraphs(r.body)}</div>
-          <div class="reply-actions">
-            <button class="link-btn" data-action="reply-to" data-id="${r.id}" data-name="${esc(ru.name)}">↩ Reply</button>
-            ${mine ? `<button class="link-btn danger" data-action="del-reply" data-id="${r.id}" data-tid="${t.id}">Delete</button>` : ''}
+          <div class="c-body">${paragraphs(r.body)}</div>
+          <div class="c-actions">
+            ${mayReply ? `<button class="link-btn" data-action="reply-to" data-id="${r.id}" data-name="${esc(ru.name)}">↩ Reply</button>` : ''}
+            ${own ? `<button class="link-btn danger" data-action="del-reply" data-id="${r.id}" data-tid="${t.id}">Delete</button>` : ''}
+            ${!own ? `<button class="link-btn" data-action="report" data-kind="reply" data-id="${r.id}" data-tid="${t.id}">⚑ Report</button>` : ''}
           </div>
-          ${kids.map((k) => renderReply(k, Math.min(depth + 1, 4))).join('')}
+          ${kids.length ? `<div class="c-kids">${kids.map(renderComment).join('')}</div>` : ''}
         </div>`;
     };
 
-    const roots = (byParent.root || []).map((r) => renderReply(r, 0)).join('');
+    const mayReply = canReplyTo(t);
+    const roots = (byParent.root || []).map(renderComment).join('');
     const replyTarget = ui.replyTo ? t.replies.find((r) => r.id === ui.replyTo) : null;
+    const n = t.replies.length;
 
     $('#main').innerHTML = `
-      <a class="back-link" href="${homeHash(new URLSearchParams(t.cat ? 'cat=' + t.cat : ''))}">← Back to ${esc(c.name)}</a>
+      <a class="back-link" href="${homeHash(new URLSearchParams('cat=' + t.cat))}">← ~/${t.cat}</a>
 
-      <article class="card post">
-        <div class="post-head">
-          ${avatar(a, 40)}
-          <div class="who">
-            <b>${esc(a.name)}</b>
-            <span>${fmtTime(t.created)} · <span class="pill">${c.icon} ${esc(c.name)}</span></span>
+      <div class="thread-layout">
+        ${voteColumn(t, 'thread')}
+        <div class="thread-body">
+          <article class="card post">
+            <div class="post-head">
+              <div class="who">
+                <b>${esc(a.name)}</b>${badges(a)}
+                <span>~/${t.cat} · posted ${fmtTime(t.created)}</span>
+              </div>
+              <div class="actions">
+                ${mine ? `<button class="btn btn-danger btn-sm" data-action="del-thread" data-id="${t.id}">Delete</button>` : ''}
+              </div>
+            </div>
+
+            <h1 class="post-title">${esc(t.title)}</h1>
+            ${stChips(t) ? `<div class="st-row">${stChips(t)}</div>` : ''}
+            ${t.tags.length ? `<div class="post-tags">${t.tags.map(tagChip).join('')}</div>` : ''}
+            <div class="post-body">${paragraphs(t.body)}</div>
+
+            <div class="post-foot solid">
+              <span class="foot-item">💬 ${n} ${n === 1 ? 'Comment' : 'Comments'}</span>
+              <button class="foot-item" data-action="share">⤴ Share</button>
+              ${mayReply ? `<button class="foot-item" data-action="focus-comment">↩ Reply</button>` : ''}
+            </div>
+          </article>
+
+          ${mayReply ? `
+          <form class="card composer" id="replyForm" data-tid="${t.id}">
+            <div class="composer-head">
+              ${avatar(me(), 26)}
+              <span>Comment as <b>${esc(me().name)}</b>${badges(me())}</span>
+              ${replyTarget
+                ? `<span class="chip">replying to ${esc(user(replyTarget.author).name)}</span>
+                   <button type="button" class="link-btn" data-action="cancel-reply">✕</button>`
+                : ''}
+            </div>
+            <textarea name="body" id="replyBody" rows="3" placeholder="Add a comment…">${esc(ui.draft)}</textarea>
+            <div class="composer-foot">
+              <span class="hint">Leave a blank line to start a new paragraph</span>
+              <button class="btn btn-primary" type="submit">Comment</button>
+            </div>
+          </form>` : `
+          <div class="card lock-note">${t.locked
+            ? '🔒 This conversation is locked — no new comments.'
+            : "You don't have permission to comment in this board."}</div>`}
+
+          <div class="comments-head">${n} ${n === 1 ? 'Comment' : 'Comments'}</div>
+          <div class="comments">
+            ${roots || `<div class="empty"><div class="big">💬</div><h3>No comments yet</h3>
+                        <p>Say something — the first comment always matters most.</p></div>`}
           </div>
-          <div class="actions">
-            ${t.author === db.currentUserId
-              ? `<button class="btn btn-danger btn-sm" data-action="del-thread" data-id="${t.id}">Delete</button>` : ''}
-          </div>
         </div>
-
-        <h1>${esc(t.title)}</h1>
-        ${t.tags.length ? `<div class="post-tags">${t.tags.map((x) => `<span class="tag">#${esc(x)}</span>`).join('')}</div>` : ''}
-        <div class="post-body">${paragraphs(t.body)}</div>
-
-        <div class="post-foot">
-          <button class="like-btn ${liked ? 'liked' : ''}" data-action="like" data-kind="thread" data-id="${t.id}">
-            <span class="heart">♥</span> ${t.likes.length}
-          </button>
-          <button class="btn btn-ghost btn-sm" data-action="focus-reply">↩ Reply</button>
-          <button class="btn btn-ghost btn-sm" data-action="copy-link">🔗 Copy link</button>
-        </div>
-      </article>
-
-      <div class="replies-head">${t.replies.length} ${t.replies.length === 1 ? 'reply' : 'replies'}</div>
-      <div class="replies">
-        ${roots || `<div class="empty"><div class="big">💬</div><h3>No replies yet</h3><p>Say something — the first reply always matters most.</p></div>`}
-      </div>
-
-      <form class="card composer" id="replyForm" data-tid="${t.id}">
-        <div class="composer-head">
-          ${avatar(me(), 28)}
-          <b>Reply as ${esc(me().name)}</b>
-          ${replyTarget
-            ? `<span class="chip">replying to ${esc(user(replyTarget.author).name)}</span>
-               <button type="button" class="link-btn" data-action="cancel-reply">✕</button>`
-            : ''}
-        </div>
-        <textarea name="body" id="replyBody" rows="4" placeholder="Write your reply…">${esc(ui.draft)}</textarea>
-        <div class="composer-foot">
-          <span class="hint">Leave a blank line to start a new paragraph</span>
-          <button class="btn btn-primary" type="submit">Post reply</button>
-        </div>
-      </form>`;
+      </div>`;
 
     const box = $('#replyBody');
     if (box) {
       box.addEventListener('input', () => { ui.draft = box.value; });
       box.style.height = 'auto';
-      box.style.height = Math.min(box.scrollHeight, 340) + 'px';
+      box.style.height = Math.min(box.scrollHeight, 320) + 'px';
     }
   }
 
   function renderNew(params) {
-    const preCat = params.get('cat') || 'general';
+    const cats = allCats();
+    let preCat = params.get('cat');
+    if (!preCat || !canPost(preCat)) {
+      preCat = (cats.find((c) => canPost(c.id)) || cats[0] || { id: 'general' }).id;
+    }
+    const muted = !!(me() && me().muffled);
     $('#main').innerHTML = `
-      <a class="back-link" href="#/">← Back to the forum</a>
+      <a class="back-link" href="#/">← Back to the feed</a>
       <div class="page-head"><div>
-        <h1>Start a new thread</h1>
-        <div class="sub">Posted as ${esc(me().name)} · saved locally in this browser</div>
+        <h1>Create a post</h1>
+        <div class="sub">Posting as ${esc(me().name)}${badges(me())}</div>
+        ${muted ? '<div class="muted-warn">🔇 You are muffled — you can read, but not post.</div>' : ''}
       </div></div>
 
       <form class="card form" id="newThreadForm">
         <div class="field">
           <label for="nt-title">Title</label>
-          <input class="input" id="nt-title" name="title" maxlength="140" placeholder="What is this thread about?" required autofocus />
+          <input class="input" id="nt-title" name="title" maxlength="140" placeholder="What is this post about?" required autofocus />
         </div>
 
         <div class="field-row">
           <div class="field">
-            <label for="nt-cat">Category</label>
+            <label for="nt-cat">Community</label>
             <select class="input" id="nt-cat" name="cat">
-              ${CATS.map((c) => `<option value="${c.id}" ${c.id === preCat ? 'selected' : ''}>${c.icon} ${c.name}</option>`).join('')}
+              ${cats.map((c) => {
+                const ok = canPost(c.id);
+                return `<option value="${c.id}" ${c.id === preCat && ok ? 'selected' : ''} ${ok ? '' : 'disabled'}>${c.icon} ~/${c.id}${c.locked ? ' 🔒' : ''}${ok ? '' : ' — no access'}</option>`;
+              }).join('')}
             </select>
           </div>
           <div class="field">
-            <label for="nt-tags">Tags <span style="color:var(--faint);font-weight:500">(optional)</span></label>
-            <input class="input" id="nt-tags" name="tags" maxlength="80" placeholder="javascript, help, meta" />
+            <label for="nt-tags">Flairs <span style="color:var(--faint);font-weight:500">(optional)</span></label>
+            <input class="input" id="nt-tags" name="tags" maxlength="80" placeholder="bash, help, meta" />
             <div class="help">Comma separated, up to 4.</div>
           </div>
         </div>
 
         <div class="field">
-          <label for="nt-body">What do you want to say?</label>
+          <label for="nt-body">Text</label>
           <textarea id="nt-body" name="body" rows="9" placeholder="Write your post…" required></textarea>
           <div class="help">Leave a blank line to start a new paragraph.</div>
         </div>
 
         <div class="form-actions">
           <a class="btn btn-ghost" href="#/">Cancel</a>
-          <button class="btn btn-primary" type="submit">Post thread</button>
+          <button class="btn btn-primary" type="submit">Post</button>
         </div>
       </form>`;
   }
@@ -491,74 +949,186 @@
     const u = db.users[id];
     if (!u) {
       $('#main').innerHTML = `<div class="empty"><div class="big">👤</div><h3>User not found</h3>
-        <p>This profile does not exist in local storage.</p>
-        <a class="btn btn-primary" href="#/">Back to the forum</a></div>`;
+        <p>This profile does not exist.</p>
+        <a class="btn btn-primary" href="#/">Back to the feed</a></div>`;
       return;
     }
 
     const mine = u.id === db.currentUserId;
     const started = db.threads.filter((t) => t.author === u.id).sort((a, b) => b.created - a.created);
-    const replyCount = db.threads.reduce(
-      (n, t) => n + t.replies.filter((r) => r.author === u.id).length, 0);
+    const s = stats(u.id);
+    const joined = new Date(u.joined).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const handle = 'u/' + u.name.toLowerCase().replace(/\s+/g, '').slice(0, 24);
 
     $('#main').innerHTML = `
-      <a class="back-link" href="#/">← Back to the forum</a>
+      ${mine ? '' : `<a class="back-link" href="#/">← Back to the feed</a>`}
 
       <div class="card profile-card">
-        ${avatar(u, 62)}
+        ${avatar(u, 64)}
         <div class="info">
-          <h1>${esc(u.name)}${mine ? ' <span class="pill">you</span>' : ''}</h1>
-          <div class="sub">Joined ${new Date(u.joined).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</div>
+          <h1>${esc(u.name)}${badges(u)}${mine ? ' <span class="tag">you</span>' : ''}</h1>
+          <div class="sub">${esc(handle)} · joined ${joined}</div>
+          <p class="bio ${u.bio ? '' : 'empty-bio'}">${u.bio
+            ? esc(u.bio)
+            : mine ? 'Add a description of yourself below.' : 'No description yet.'}</p>
         </div>
         <div class="stats">
-          <div><b>${started.length}</b><span>threads</span></div>
-          <div><b>${replyCount}</b><span>replies</span></div>
+          <div><b class="unit">${fmtNum(s.karma)}</b><span>Karma</span></div>
+          <div><b>${s.rating === null ? '—' : s.rating + '%'}</b><span title="Upvote ratio">Rating</span></div>
+          <div><b>${s.posts}</b><span>Posts</span></div>
+          <div><b>${s.comments}</b><span>Comments</span></div>
         </div>
       </div>
 
       ${mine ? `
-        <form class="card form" id="renameForm" style="gap:12px;padding:18px">
-          <div class="field" style="margin:0">
-            <label for="rename">Display name</label>
-            <div style="display:flex;gap:10px">
-              <input class="input" id="rename" name="name" maxlength="32" value="${esc(u.name)}" />
-              <button class="btn btn-primary" type="submit">Save</button>
+        <form class="card form" id="editProfileForm">
+          <div class="field-row">
+            <div class="field">
+              <label for="ep-name">Username</label>
+              <input class="input" id="ep-name" name="name" maxlength="32" value="${esc(u.name)}" />
             </div>
+            <div class="field">
+              <label>Profile picture</label>
+              <div class="pfp-preview">
+                <span class="pfp-frame">${avatar(u, 46)}</span>
+                <div class="pfp-btns">
+                  <label class="btn btn-ghost btn-sm" for="ep-pfp">📤 Upload image</label>
+                  ${u.pfp ? `<button class="btn btn-ghost btn-sm" type="button" data-action="pfp-remove">Remove</button>` : ''}
+                </div>
+              </div>
+              <input class="file-input" type="file" id="ep-pfp" accept="image/png,image/jpeg,image/webp,image/gif" />
+              <div class="help">PNG, JPG or WebP — cropped square and resized automatically.</div>
+            </div>
+          </div>
+          <div class="field">
+            <label for="ep-bio">Description</label>
+            <textarea id="ep-bio" name="bio" rows="2" maxlength="180" placeholder="Tell the forum about yourself…">${esc(u.bio || '')}</textarea>
+          </div>
+          <div class="form-actions">
+            <button class="btn btn-ghost" type="button" data-action="logout">Log out</button>
+            <button class="btn btn-primary" type="submit">Save profile</button>
           </div>
         </form>` : ''}
 
-      <div class="section-title">Threads started</div>
+      ${(mine || isStaff()) && u.warnings.length ? `
+        <div class="section-title">Infractions</div>
+        <div class="card infract-card">
+          <ul class="infractions">
+            ${u.warnings.map((wr) => `
+              <li><b>${esc(wr.reason)}</b>
+                <span>${new Date(wr.at).toLocaleString()} · issued by ${esc(user(wr.by).name)}</span></li>`).join('')}
+          </ul>
+        </div>` : ''}
+
+      ${mine && u.muffled
+        ? '<div class="card lock-note">🔇 You are muffled — you can read, but not post.</div>' : ''}
+
+      <div class="section-title">Posts by ${esc(u.name)}</div>
       ${started.length
-        ? `<div class="thread-list">${started.map(threadRow).join('')}</div>`
-        : `<div class="empty"><div class="big">📝</div><h3>No threads yet</h3><p>${esc(u.name)} has not started a discussion.</p></div>`}`;
+        ? `<div class="feed">${started.map(postRow).join('')}</div>`
+        : `<div class="empty"><div class="big">📝</div><h3>No posts yet</h3><p>${esc(u.name)} has not posted anything.</p></div>`}`;
   }
 
   /* ---------------- render ---------------- */
 
+  function renderBanner() {
+    const el = $('#siteBanner');
+    if (!el) return;
+    if (db.banner) {
+      el.className = 'site-banner';
+      el.innerHTML = `<span aria-hidden="true">📣</span><span>${esc(db.banner)}</span>`;
+    } else if (db.maintenance && isAdmin()) {
+      el.className = 'site-banner warn';
+      el.innerHTML = `<span aria-hidden="true">🛠</span><span>Maintenance mode is on — visitors see an offline screen. <code>/maintenance off</code> restores access.</span>`;
+    } else {
+      el.className = 'site-banner hidden';
+      el.innerHTML = '';
+    }
+  }
+
+  function renderMaintenance() {
+    $('#main').innerHTML = `
+      <div class="empty maint-card">
+        <div class="big">🔧</div>
+        <h3>Maintenance in progress</h3>
+        <p>We are performing scheduled updates. Check back in a few minutes.</p>
+      </div>`;
+  }
+
+  function renderBlocked(u, st) {
+    $('#main').innerHTML = `
+      <div class="empty blocked-card">
+        <div class="big">⛔</div>
+        <h3>Access suspended</h3>
+        <p>${esc(st.msg)}</p>
+        ${u.warnings && u.warnings.length
+          ? `<p class="dim-note">${u.warnings.length} infraction${u.warnings.length === 1 ? '' : 's'} on file.</p>`
+          : ''}
+        <div class="btn-row">
+          <button class="btn btn-ghost" data-action="logout">Sign out</button>
+          <a class="btn btn-primary" href="#/about">Read the rules</a>
+        </div>
+      </div>`;
+  }
+
   function render() {
     const { path, q } = parse();
     renderHeader();
-    renderSidebar(q);
+    renderNavCats(q, path);
+    renderBanner();
 
-    if (path === '/' || path === '') renderHome(q);
-    else if (path === '/new') renderNew(q);
-    else if (path.startsWith('/t/')) renderThread(path.slice(3));
-    else if (path.startsWith('/user/')) renderUser(path.slice(6));
-    else $('#main').innerHTML = `<div class="empty"><div class="big">🧭</div><h3>Page not found</h3>
-      <p>That URL does not exist here.</p><a class="btn btn-primary" href="#/">Back to the forum</a></div>`;
+    const u = me();
+    const maint = db.maintenance && !isAdmin();
+    const held = !!u && !isAdmin() && !!statusOf(u);
+    const authModal = $('#authModal');
+    let special = false;
+
+    if (maint) {
+      /* offline for everyone but admins */
+      special = true;
+      renderMaintenance();
+      authModal.classList.add('hidden');
+    } else if (!u) {
+      /* signed out — read-only feed behind the sign-in screen */
+      renderHome(q);
+      const wasHidden = authModal.classList.contains('hidden');
+      authModal.classList.remove('hidden');
+      if (wasHidden) setTimeout(() => { const el = $('#loginForm input'); if (el) el.focus(); }, 60);
+    } else if (held) {
+      /* banned or suspended account */
+      special = true;
+      authModal.classList.add('hidden');
+      renderBlocked(u, statusOf(u));
+    } else {
+      if (!authModal.classList.contains('hidden')) authModal.classList.add('hidden');
+
+      if (path === '/' || path === '') renderHome(q);
+      else if (path === '/about') renderAbout();
+      else if (path === '/profile') renderUser(db.currentUserId);
+      else if (path === '/new') renderNew(q);
+      else if (path.startsWith('/t/')) renderThread(path.slice(3));
+      else if (path.startsWith('/user/')) renderUser(path.slice(6));
+      else $('#main').innerHTML = `<div class="empty"><div class="big">🧭</div><h3>Page not found</h3>
+        <p>That URL does not exist here.</p><a class="btn btn-primary" href="#/">Back to the feed</a></div>`;
+    }
+
+    const view = special || !u ? 'main'
+      : path === '/about' ? 'about'
+      : (path === '/profile' || path.startsWith('/user/')) ? 'profile'
+      : 'main';
+    const catSel = q.get('cat');
+    const onFeed = path === '/' || path === '';
+    document.querySelectorAll('.nav-tab').forEach((a) => {
+      const isMain = a.dataset.view === 'main';
+      a.classList.toggle('active', a.dataset.view === view &&
+        !(isMain && onFeed && catSel));
+    });
 
     const search = $('#search');
     if (document.activeElement !== search) search.value = q.get('q') || '';
 
     if (ui.lastPath !== null && ui.lastPath !== path) window.scrollTo({ top: 0 });
     ui.lastPath = path;
-
-    document.body.classList.remove('nav-open');
-
-    if (!db.prefs.named) {
-      $('#setupModal').classList.remove('hidden');
-      setTimeout(() => $('#setupName') && $('#setupName').focus(), 60);
-    }
   }
 
   /* ---------------- actions ---------------- */
@@ -572,20 +1142,27 @@
     toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
   }
 
-  function toggleLike(kind, id, tid) {
-    const uid_ = db.currentUserId;
-    if (kind === 'thread') {
-      const t = thread(id);
-      if (!t) return;
-      const i = t.likes.indexOf(uid_);
-      i < 0 ? t.likes.push(uid_) : t.likes.splice(i, 1);
-    } else {
-      const t = thread(tid);
-      const r = t && t.replies.find((x) => x.id === id);
-      if (!r) return;
-      const i = r.likes.indexOf(uid_);
-      i < 0 ? r.likes.push(uid_) : r.likes.splice(i, 1);
+  function applyVote(kind, id, tid, dir) {
+    const item = kind === 'thread'
+      ? thread(id)
+      : ((thread(tid) || {}).replies || []).find((r) => r.id === id);
+    if (!item) return;
+
+    if (!Array.isArray(item.up)) item.up = [];
+    if (!Array.isArray(item.down)) item.down = [];
+
+    const who = db.currentUserId;
+    const bucket = dir === 'up' ? item.up : item.down;
+    const other = dir === 'up' ? item.down : item.up;
+    const at = bucket.indexOf(who);
+    const oi = other.indexOf(who);
+
+    if (at >= 0) bucket.splice(at, 1);        // click again → undo
+    else {
+      if (oi >= 0) other.splice(oi, 1);       // switch sides
+      bucket.push(who);
     }
+
     save();
     render();
   }
@@ -595,21 +1172,84 @@
     if (!el) return;
     const action = el.dataset.action;
 
-    if (action === 'menu') document.body.classList.toggle('nav-open');
+    if (action === 'auth-tab') {
+      const which = el.dataset.which || 'login';
+      document.querySelectorAll('.auth-tab').forEach((b) =>
+        b.classList.toggle('active', b.dataset.which === which));
+      $('#loginForm').classList.toggle('hidden', which !== 'login');
+      $('#registerForm').classList.toggle('hidden', which !== 'register');
+      $('#authErr').textContent = '';
+      return;
+    }
+
+    if (action === 'cmd-open') { openCmd(); return; }
+    if (action === 'cmd-close') { closeCmd(); return; }
+
+    if (action === 'report') {
+      if (!db.currentUserId) { toast('Sign in to flag content'); return; }
+      let item = null;
+      if (el.dataset.kind === 'thread') item = thread(el.dataset.id);
+      else {
+        const parent = thread(el.dataset.tid);
+        item = parent && parent.replies.find((r) => r.id === el.dataset.id);
+      }
+      if (!item) return;
+      item.reports = item.reports || [];
+      if (item.reports.some((rp) => rp.by === db.currentUserId)) { toast('You already flagged this'); return; }
+      item.reports.push({ id: uid('rp'), by: db.currentUserId, at: Date.now(), reason: 'Flagged by a member' });
+      save();
+      toast('Flagged for staff review ✓');
+      return;
+    }
+
+    if (action === 'logout') {
+      db.currentUserId = null;
+      save();
+      location.hash = '#/';
+      /* land back on the Sign in tab with a clean error line */
+      $('#loginForm').classList.remove('hidden');
+      $('#registerForm').classList.add('hidden');
+      document.querySelectorAll('.auth-tab').forEach((b) =>
+        b.classList.toggle('active', b.dataset.which === 'login'));
+      $('#authErr').textContent = '';
+      render();
+      toast('Signed out');
+      return;
+    }
+
+    if (action === 'pfp-remove') {
+      me().pfp = '';
+      save(); render(); toast('Picture removed');
+      return;
+    }
 
     if (action === 'theme') {
       const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
       document.documentElement.dataset.theme = next;
-      try { localStorage.setItem('vibecode.theme', next); } catch (err) {}
+      try { localStorage.setItem('bashforum.theme', next); } catch (err) {}
       db.prefs.theme = next;
       save();
       renderHeader();
     }
 
-    if (action === 'me') location.hash = '#/user/' + db.currentUserId;
+    if (action === 'me') location.hash = '#/profile';
 
-    if (action === 'like') {
-      toggleLike(el.dataset.kind, el.dataset.id, el.dataset.tid);
+    if (action === 'open') {
+      const anchor = e.target.closest('a');
+      if (anchor) return;               // let real links navigate themselves
+      location.hash = el.dataset.href;
+    }
+
+    if (action === 'vote') {
+      applyVote(el.dataset.kind, el.dataset.id, el.dataset.tid, el.dataset.dir);
+    }
+
+    if (action === 'share') {
+      const url = location.href;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(url)
+          .then(() => toast('Link copied'), () => toast('Could not copy link'));
+      } else toast(url);
     }
 
     if (action === 'reply-to') {
@@ -622,48 +1262,44 @@
 
     if (action === 'cancel-reply') { ui.replyTo = null; render(); }
 
-    if (action === 'focus-reply') {
+    if (action === 'focus-comment') {
       const box = $('#replyBody');
       if (box) { box.focus(); box.scrollIntoView({ block: 'center' }); }
     }
 
-    if (action === 'copy-link') {
-      const url = location.href;
-      if (navigator.clipboard) navigator.clipboard.writeText(url).then(
-        () => toast('Link copied'), () => toast('Could not copy link'));
-      else toast(url);
-    }
-
     if (action === 'del-thread') {
-      if (confirm('Delete this thread and all of its replies? This cannot be undone.')) {
+      if (confirm('Delete this post and all of its comments? This cannot be undone.')) {
         db.threads = db.threads.filter((t) => t.id !== el.dataset.id);
         save();
-        location.hash = '#/';
-        toast('Thread deleted');
+        if (location.hash.startsWith('#/t/')) location.hash = '#/';
         render();
+        toast('Post deleted');
       }
     }
 
     if (action === 'del-reply') {
       const t = thread(el.dataset.tid);
       if (!t) return;
-      const removeIds = new Set([el.dataset.id]);
+      const drop = new Set([el.dataset.id]);
       let grew = true;
-      while (grew) {                       // also drop any nested children
+      while (grew) {                          // take nested replies down with it
         grew = false;
         t.replies.forEach((r) => {
-          if (r.parent && removeIds.has(r.parent) && !removeIds.has(r.id)) {
-            removeIds.add(r.id); grew = true;
+          if (r.parent && drop.has(r.parent) && !drop.has(r.id)) {
+            drop.add(r.id); grew = true;
           }
         });
       }
-      t.replies = t.replies.filter((r) => !removeIds.has(r.id));
-      save(); render(); toast('Reply deleted');
+      t.replies = t.replies.filter((r) => !drop.has(r.id));
+      save(); render(); toast('Comment deleted');
     }
 
     if (action === 'reset') {
-      if (confirm('Reset the forum back to the demo data? Your posts on this device will be lost.')) {
-        try { localStorage.removeItem(KEY); } catch (err) {}
+      if (confirm('Reset bashForum to its original content? All posts and comments will be removed.')) {
+        try {
+          localStorage.removeItem(KEY);
+          localStorage.removeItem(LEGACY_KEY);
+        } catch (err) {}
         location.hash = '#/';
         location.reload();
       }
@@ -675,25 +1311,60 @@
   document.addEventListener('submit', (e) => {
     const form = e.target;
 
-    if (form.id === 'setupForm') {
+    if (form.id === 'loginForm') {
       e.preventDefault();
-      const name = String(new FormData(form).get('name') || '').trim().slice(0, 32);
-      if (!name) return;
-      me().name = name;
+      const fd = new FormData(form);
+      const email = normEmail(fd.get('email'));
+      const pass = String(fd.get('password') || '');
+      const acc = db.accounts[email];
+      if (!acc) { authError('No account found with that email'); return; }
+      if (acc.hash !== hashPass(pass, acc.salt)) { authError('Incorrect password'); return; }
+      const target = db.users[acc.userId];
+      const held = target && statusOf(target);
+      if (held) { authError(held.msg); return; }
+      db.currentUserId = acc.userId;
       db.prefs.named = true;
       save();
-      $('#setupModal').classList.add('hidden');
-      toast('Welcome, ' + name + '!');
+      form.reset();
       render();
+      toast('Welcome back, ' + user(acc.userId).name + '!');
       return;
     }
 
-    if (form.id === 'renameForm') {
+    if (form.id === 'registerForm') {
       e.preventDefault();
-      const name = String(new FormData(form).get('name') || '').trim().slice(0, 32);
-      if (!name) return;
+      const fd = new FormData(form);
+      const name = String(fd.get('name') || '').trim().slice(0, 32);
+      const email = normEmail(fd.get('email'));
+      const pass = String(fd.get('password') || '');
+      if (!name) { authError('Choose a display name'); return; }
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { authError('Enter a valid email address'); return; }
+      if (pass.length < 6) { authError('Password must be at least 6 characters'); return; }
+      if (db.accounts[email]) { authError('That email is already registered — use Sign in'); return; }
+
+      const id = uid('u');
+      const salt = uid('s');
+      db.users[id] = { id, name, joined: Date.now(), bio: '', pfp: '' };
+      db.accounts[email] = { email, salt, hash: hashPass(pass, salt), userId: id, created: Date.now() };
+      defaults(db);
+      db.currentUserId = id;
+      db.prefs.named = true;
+      save();
+      form.reset();
+      render();
+      toast('Welcome to bashForum, ' + name + '!');
+      return;
+    }
+
+    if (form.id === 'editProfileForm') {
+      e.preventDefault();
+      const fd = new FormData(form);
+      const name = String(fd.get('name') || '').trim().slice(0, 32);
+      const bio = String(fd.get('bio') || '').trim().slice(0, 180);
+      if (!name) { toast('Username is required'); return; }
       me().name = name;
-      save(); render(); toast('Name updated');
+      me().bio = bio;
+      save(); render(); toast('Profile updated');
       return;
     }
 
@@ -702,7 +1373,17 @@
       const fd = new FormData(form);
       const title = String(fd.get('title') || '').trim();
       const body = String(fd.get('body') || '').trim();
-      if (!title || !body) { toast('Title and body are required'); return; }
+      if (!title || !body) { toast('Title and text are required'); return; }
+
+      const author = me();
+      const heldPost = statusOf(author);
+      if (heldPost) { toast('Your account is suspended'); return; }
+      if (author.muffled) { toast("You're muffled — reading is fine, posting is not"); return; }
+      const cat = String(fd.get('cat') || 'general');
+      if (!canPost(cat)) {
+        toast(catLocked(cat) ? 'That board is locked for new topics' : "You don't have permission to post there");
+        return;
+      }
 
       const tags = String(fd.get('tags') || '')
         .split(',').map((s) => s.trim().replace(/^#/, '')).filter(Boolean).slice(0, 4);
@@ -711,17 +1392,17 @@
         id: uid('t'),
         title: title.slice(0, 140),
         body,
-        cat: String(fd.get('cat') || 'general'),
+        cat,
         author: db.currentUserId,
         tags,
         created: Date.now(),
-        likes: [],
+        up: [], down: [],
         replies: [],
       };
       db.threads.unshift(t);
       save();
       location.hash = '#/t/' + t.id;
-      toast('Thread posted 🎉');
+      toast('Post published 🎉');
       return;
     }
 
@@ -731,21 +1412,73 @@
       const t = thread(form.dataset.tid);
       if (!body || !t) { toast('Write something first'); return; }
 
+      const commenter = me();
+      const heldReply = statusOf(commenter);
+      if (heldReply) { toast('Your account is suspended'); return; }
+      if (commenter.muffled) { toast("You're muffled — reading is fine, commenting is not"); return; }
+      if (!canReplyTo(t)) {
+        toast(t.locked ? 'This thread is locked' : "You don't have permission to comment here");
+        return;
+      }
+
       t.replies.push({
         id: uid('r'),
         parent: ui.replyTo && t.replies.some((r) => r.id === ui.replyTo) ? ui.replyTo : null,
         author: db.currentUserId,
         body,
         created: Date.now(),
-        likes: [],
+        up: [], down: [],
       });
       ui.draft = '';
       ui.replyTo = null;
       save();
       render();
-      toast('Reply posted');
-      const el = t.replies.length && $('#reply-' + t.replies[t.replies.length - 1].id);
+      toast('Comment posted');
+      const added = t.replies[t.replies.length - 1];
+      const el = added && $('#reply-' + added.id);
       if (el) { el.classList.add('flash'); el.scrollIntoView({ block: 'center' }); }
+    }
+  });
+
+  /* ---------------- profile picture upload ---------------- */
+
+  function readPfp(file) {
+    if (!file || !String(file.type).startsWith('image/')) { toast('Please choose an image file'); return; }
+    const fr = new FileReader();
+    fr.onerror = () => toast('⚠️ Could not read that file');
+    fr.onload = () => {
+      const img = new Image();
+      img.onerror = () => toast('⚠️ That image could not be processed');
+      img.onload = () => {
+        try {
+          const MAX = 192;
+          const iw = img.naturalWidth || img.width;
+          const ih = img.naturalHeight || img.height;
+          const side = Math.min(iw, ih);
+          const c = document.createElement('canvas');
+          c.width = c.height = MAX;
+          const ctx = c.getContext('2d');
+          if (!ctx) { toast('⚠️ Could not process that image'); return; }
+          ctx.drawImage(img, (iw - side) / 2, (ih - side) / 2, side, side, 0, 0, MAX, MAX);
+          let data = '';
+          try { data = c.toDataURL('image/webp', 0.82); } catch (err) { data = ''; }
+          if (!/^data:image\/webp/.test(data)) data = c.toDataURL('image/jpeg', 0.85);
+          me().pfp = data;
+          save(); render(); toast('Picture updated 📷');
+        } catch (err) {
+          toast('⚠️ Could not process that image');
+        }
+      };
+      img.src = fr.result;
+    };
+    fr.readAsDataURL(file);
+  }
+
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    if (el && el.id === 'ep-pfp' && el.files && el.files[0]) {
+      readPfp(el.files[0]);
+      el.value = '';
     }
   });
 
@@ -755,7 +1488,7 @@
   $('#search').addEventListener('input', (e) => {
     const value = e.target.value.trim();
     const { path, q } = parse();
-    if (path !== '/' && path !== '') return;   // only filter while on the list view
+    if (path !== '/' && path !== '') return;   // only filter while on the feed
 
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
@@ -780,7 +1513,818 @@
     if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); }
   });
 
+  /* ---------------- moderation console ---------------- */
+
+  const cmdState = { greeted: false, hist: [], hi: -1 };
+
+  function cmdOut(text, cls) {
+    const log = $('#cmdLog');
+    if (!log) return;
+    const line = document.createElement('div');
+    line.className = 'cmd-line' + (cls ? ' ' + cls : '');
+    line.textContent = String(text);
+    log.appendChild(line);
+    while (log.children.length > 260) log.removeChild(log.firstChild);
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function openCmd() {
+    const m = $('#cmdModal');
+    if (!m) return;
+    const opening = m.classList.contains('hidden');
+    m.classList.remove('hidden');
+    if (opening) {
+      if (!cmdState.greeted) {
+        cmdState.greeted = true;
+        cmdOut('bashForum moderation console — /help lists every command.', 'info');
+      }
+      if (isAdmin()) cmdOut('✓ Signed in with an admin account — commands allowed.', 'info');
+      else cmdOut('⛔ Admin access required — sign in with the staff account to run commands.', 'err');
+    }
+    const inp = $('#cmdInput');
+    if (inp) setTimeout(() => inp.focus(), 40);
+  }
+
+  function closeCmd() {
+    const m = $('#cmdModal');
+    if (m) m.classList.add('hidden');
+    const inp = $('#cmdInput');
+    if (inp) inp.blur();
+  }
+
+  const tokenize = (s) => {
+    const out = [];
+    let cur = '';
+    let q = '';
+    for (const ch of String(s)) {
+      if (q) {
+        if (ch === q) q = '';
+        else cur += ch;
+      } else if (ch === '"' || ch === "'") q = ch;
+      else if (ch === ' ') { if (cur) { out.push(cur); cur = ''; } }
+      else cur += ch;
+    }
+    if (cur) out.push(cur);
+    return out;
+  };
+
+  const NO_AUDIT = new Set(['help', 'commands', 'version']);
+
+  function runCommand(raw) {
+    const str = String(raw || '').trim();
+    if (!str) return;
+    cmdOut('❯ ' + str, 'cmd-echo');
+
+    const body = str.replace(/^\s*\/+/, '');
+    const m = body.match(/^(\S+)\s*/);
+    const name = m ? body.slice(0, m[0].length).trim() : body;
+    const rest = m ? body.slice(m[0].length) : '';
+    const key = name.toLowerCase();
+    const spec = COMMANDS[key];
+
+    if (!spec) {
+      cmdOut('✗ Unknown command: /' + name + ' — try /help', 'err');
+      return;
+    }
+    if (!isAdmin()) {
+      cmdOut('⛔ Admin access required — sign in with the staff account to run commands.', 'err');
+      audit(key, 'denied — not an admin');
+      save();
+      return;
+    }
+
+    const c = {
+      a: tokenize(rest),
+      rest,
+      usage: spec.usage,
+      out: (t, cls) => cmdOut(t, cls || 'ok'),
+      info: (t) => cmdOut(t, 'info'),
+      err: (t) => cmdOut('✗ ' + t, 'err'),
+    };
+    try {
+      spec.run(c);
+    } catch (err) {
+      cmdOut('⚠ Command failed: ' + (err && err.message ? err.message : err), 'err');
+    }
+    if (!NO_AUDIT.has(key)) audit(key, rest);
+    save();
+    render();
+  }
+
+  /* ---- console argument helpers ---- */
+
+  const usageErr = (c) => { c.err('Usage: ' + c.usage); };
+
+  /* longest exact id/name match first, so multi-word names + trailing args work */
+  function takeUser(c) {
+    if (!c.a.length) { usageErr(c); return null; }
+    for (let n = Math.min(5, c.a.length); n >= 1; n--) {
+      const key = c.a.slice(0, n).join(' ');
+      const u = db.users[key] ||
+        Object.values(db.users).find((x) => x.name.toLowerCase() === key.toLowerCase());
+      if (u) return { u, tail: c.a.slice(n) };
+    }
+    const u = findUser(c.a[0]);
+    if (!u) { c.err('No user matches "' + c.a.join(' ') + '"'); return null; }
+    return { u, tail: c.a.slice(1) };
+  }
+
+  const needUser = (c) => { const t = takeUser(c); return t ? t.u : null; };
+
+  const needThread = (c, i = 0) => {
+    const k = c.a[i];
+    if (!k) { usageErr(c); return null; }
+    const t = findThreadAny(k);
+    if (!t) { c.err('No thread matches "' + k + '"'); return null; }
+    return t;
+  };
+
+  const needReply = (c) => {
+    const k = c.a[0];
+    if (!k) { usageErr(c); return null; }
+    const f = findReplyAny(k);
+    if (!f) { c.err('No comment matches "' + k + '"'); return null; }
+    return f;
+  };
+
+  const needItem = (c, i = 0) => {
+    const k = c.a[i];
+    if (!k) { usageErr(c); return null; }
+    const it = findItem(k);
+    if (!it) { c.err('No post or comment matches "' + k + '"'); return null; }
+    return it;
+  };
+
+  const needCat = (c, i = 0) => {
+    const k = c.a[i];
+    if (!k) { usageErr(c); return null; }
+    const cat = findCat(k);
+    if (!cat) { c.err('No board matches "' + k + '"'); return null; }
+    return cat;
+  };
+
+  const staffProtected = (c, u) => {
+    if (u.role === 'admin') { c.err('The admin account is protected.'); return false; }
+    return true;
+  };
+
+  const allItems = () => {
+    const out = [];
+    db.threads.forEach((t) => { out.push(t); (t.replies || []).forEach((r) => out.push(r)); });
+    return out;
+  };
+
+  /* ---- the commands ---- */
+
+  const COMMANDS = {};
+  const def = (name, group, usage, desc, run) => { COMMANDS[name] = { group, usage, desc, run }; };
+
+  /* Console */
+  const helpRun = (c) => {
+    c.out('bashForum moderation commands', 'info');
+    ['Console', 'Users', 'Threads', 'Boards', 'Queue', 'System'].forEach((g) => {
+      const rows = Object.entries(COMMANDS).filter(([, s]) => s.group === g);
+      if (!rows.length) return;
+      c.info('');
+      c.info('  ' + g);
+      rows.forEach(([, s]) => c.info('    ' + s.usage.padEnd(48) + s.desc));
+    });
+    c.info('');
+    c.info('  Every command needs an admin sign-in.');
+  };
+  def('help', 'Console', '/help', 'List every command with usage', helpRun);
+  def('commands', 'Console', '/commands', 'Same as /help', helpRun);
+  def('version', 'Console', '/version', 'Show the running software version', (c) => {
+    c.out('bashForum v1.0.0 · schema v' + (db.version || 1), 'info');
+    c.info('   boards ' + allCats().length + ' · users ' + Object.keys(db.users).length +
+      ' · accounts ' + Object.keys(db.accounts).length +
+      ' · plugins ' + Object.keys(db.plugins).length);
+  });
+
+  /* Users */
+  def('ban', 'Users', '/ban <user> [reason]', 'Permanently block a user from the forum', (c) => {
+    const t = takeUser(c);
+    if (!t || !staffProtected(c, t.u)) return;
+    if (t.u.banned) { c.info(t.u.name + ' is already banned.'); return; }
+    t.u.banned = true;
+    t.u.bannedUntil = 0;
+    t.u.suspended = false;
+    t.u.banReason = t.tail.join(' ').slice(0, 160);
+    c.out('⛔ ' + t.u.name + ' is permanently banned' + (t.u.banReason ? ' — ' + t.u.banReason : '') + '.');
+  });
+
+  def('unban', 'Users', '/unban <user>', 'Restore a banned user’s access', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    const had = u.banned || u.bannedUntil;
+    u.banned = false;
+    u.banReason = '';
+    u.bannedUntil = 0;
+    c.out(had ? '✅ ' + u.name + ' can sign in again.' : u.name + ' was not banned.');
+  });
+
+  def('tempban', 'Users', '/tempban <user> <duration>', 'Suspend an account for a set time (30m, 12h, 7d)', (c) => {
+    const t = takeUser(c);
+    if (!t || !staffProtected(c, t.u)) return;
+    const d = parseDur(t.tail[0]);
+    if (!d) { c.err('Usage: ' + c.usage + '  — e.g. /tempban sam 7d'); return; }
+    t.u.bannedUntil = Date.now() + d;
+    t.u.banned = false;
+    t.u.suspended = false;
+    c.out('⏳ ' + t.u.name + ' suspended until ' + new Date(t.u.bannedUntil).toLocaleString() + '.');
+  });
+
+  def('muffle', 'Users', '/muffle <user>', 'Mute posting rights (run again to unmuffle)', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    u.muffled = !u.muffled;
+    c.out(u.muffled
+      ? '🔇 ' + u.name + ' is muffled — can read but not post. Run again to unmuffle.'
+      : '🔊 ' + u.name + ' can post again.');
+  });
+
+  def('warn', 'Users', '/warn <user> [reason]', 'Issue an official infraction notice', (c) => {
+    const t = takeUser(c);
+    if (!t) return;
+    const reason = t.tail.join(' ').slice(0, 160) || 'No reason given';
+    t.u.warnings.unshift({ at: Date.now(), by: db.currentUserId, reason });
+    c.out('⚠ Warning issued to ' + t.u.name + ': ' + reason +
+      ' (total: ' + t.u.warnings.length + ')');
+  });
+
+  def('warnhistory', 'Users', '/warnhistory <user>', 'Show every infraction on a profile', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    if (!u.warnings.length) { c.out('No infractions on record for ' + u.name + '.'); return; }
+    c.out('Infractions for ' + u.name + ' (' + u.warnings.length + '):', 'info');
+    u.warnings.forEach((wr, i) => c.info('  ' + (i + 1) + '. ' + new Date(wr.at).toLocaleString() +
+      ' — ' + wr.reason + ' (issued by ' + user(wr.by).name + ')'));
+  });
+
+  def('suspend', 'Users', '/suspend <user>', 'Freeze an account during an investigation', (c) => {
+    const u = needUser(c);
+    if (!u || !staffProtected(c, u)) return;
+    if (u.suspended) { c.info(u.name + ' is already suspended.'); return; }
+    u.suspended = true;
+    c.out('🧊 ' + u.name + '’s account is frozen — sign-in blocked until /approve ' + u.name + '.');
+  });
+
+  def('approve', 'Users', '/approve <user> | /approve post <id>',
+    'Lift a suspension, or clear a flagged post', (c) => {
+    if ((c.a[0] || '').toLowerCase() === 'post') {
+      const it = needItem(c, 1);
+      if (!it) return;
+      const item = it.kind === 'thread' ? it.t : it.r;
+      item.reports = [];
+      item.hidden = false;
+      item.deleted = false;
+      c.out('✅ ' + item.id + ' approved — back in public view.');
+      return;
+    }
+    const u = needUser(c);
+    if (!u) return;
+    if (!u.suspended) { c.info(u.name + ' has no pending hold — nothing to approve.'); return; }
+    u.suspended = false;
+    c.out('✅ ' + u.name + ' is approved — sign-in restored.');
+  });
+
+  def('deleteuser', 'Users', '/deleteuser <user>', 'Purge a profile and its sign-in account', (c) => {
+    const u = needUser(c);
+    if (!u || !staffProtected(c, u)) return;
+    const posts = db.threads.filter((t) => t.author === u.id).length;
+    let accs = 0;
+    Object.keys(db.accounts).forEach((k) => {
+      if (db.accounts[k].userId === u.id) { delete db.accounts[k]; accs++; }
+    });
+    delete db.users[u.id];
+    c.out('🗑 Purged ' + u.name + ' — account removed (' + accs + ' sign-in' +
+      (accs === 1 ? '' : 's') + '), ' + posts + ' post' + (posts === 1 ? '' : 's') +
+      ' now show as “Deleted user”.');
+  });
+
+  def('anonymize', 'Users', '/anonymize <user>', 'Strip personal data, keep the posts', (c) => {
+    const u = needUser(c);
+    if (!u || !staffProtected(c, u)) return;
+    const posts = db.threads.filter((t) => t.author === u.id).length;
+    u.name = 'Anonymous';
+    u.bio = '';
+    u.pfp = '';
+    u.rank = '';
+    u.verified = false;
+    let newEmail = null;
+    Object.keys(db.accounts).forEach((k) => {
+      const acc = db.accounts[k];
+      if (acc.userId === u.id) {
+        delete db.accounts[k];
+        newEmail = 'anon' + Math.random().toString(36).slice(2, 8) + '@removed.local';
+        db.accounts[newEmail] = Object.assign({}, acc, { email: newEmail });
+      }
+    });
+    c.out('🕵 Profile anonymized — name, bio and picture cleared; ' + posts +
+      ' post' + (posts === 1 ? '' : 's') + ' preserved.');
+    if (newEmail) c.info('   Sign-in email is now ' + newEmail + ' (password unchanged).');
+  });
+
+  def('setrole', 'Users', '/setrole <user> <member|mod|admin>', 'Assign a permission group', (c) => {
+    const t = takeUser(c);
+    if (!t) return;
+    const raw = (t.tail[0] || '').toLowerCase();
+    const map = { member: '', mem: '', mod: 'mod', moderator: 'mod', admin: 'admin', administrator: 'admin' };
+    if (!(raw in map)) { c.err('Usage: ' + c.usage + '  — groups: member, mod, admin'); return; }
+    if (t.u.id === db.currentUserId) { c.err('You cannot change your own role.'); return; }
+    const next = map[raw];
+    if (t.u.role === 'admin' && next !== 'admin' &&
+        Object.values(db.users).filter((x) => x.role === 'admin').length <= 1) {
+      c.err('There must always be at least one admin.');
+      return;
+    }
+    t.u.role = next;
+    c.out('🛡 ' + t.u.name + ' is now ' +
+      (next === 'admin' ? 'an admin' : next === 'mod' ? 'a moderator' : 'a regular member') + '.');
+  });
+
+  def('changerank', 'Users', '/changerank <user> <rank>', 'Set a custom title next to the name', (c) => {
+    const t = takeUser(c);
+    if (!t) return;
+    const rank = t.tail.join(' ').slice(0, 48);
+    if (!rank) { c.err('Usage: ' + c.usage); return; }
+    t.u.rank = rank;
+    c.out('🎖 ' + t.u.name + '’s rank is now “' + t.u.rank + '”.');
+  });
+
+  def('verify', 'Users', '/verify <user>', 'Grant the verified badge', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    if (u.verified) { c.info(u.name + ' is already verified.'); return; }
+    u.verified = true;
+    c.out('✓ ' + u.name + ' is now verified.');
+  });
+
+  def('resetpassword', 'Users', '/resetpassword <user>', 'Force a password reset for a locked-out user', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    const entry = Object.values(db.accounts).find((a) => a.userId === u.id);
+    if (!entry) { c.err(u.name + ' has no sign-in account (only registered emails can reset).'); return; }
+    const tmp = Math.random().toString(36).slice(2, 8) + Math.floor(10 + Math.random() * 89);
+    const salt = uid('s');
+    entry.salt = salt;
+    entry.hash = hashPass(tmp, salt);
+    c.out('🔑 Forced reset for ' + u.name + '. Temporary password: ' + tmp);
+    c.info('   Shown once — hand it over through a trusted channel.');
+  });
+
+  def('ipcheck', 'Users', '/IPcheck <user>', 'Show registered addresses for an account', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    c.out('Network addresses for ' + u.name + ': none on record.', 'info');
+    const entry = Object.values(db.accounts).find((a) => a.userId === u.id);
+    c.info('   Contact on file: ' + (entry ? entry.email : '—') +
+      ' · profile created ' + new Date(u.joined).toLocaleDateString());
+  });
+
+  /* Threads */
+  def('lock', 'Threads', '/lock <thread_id>', 'Halt all new replies on a thread', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    if (t.locked) { c.info(t.id + ' is already locked.'); return; }
+    t.locked = true;
+    c.out('🔒 ' + t.id + ' locked — no new replies.');
+  });
+
+  def('unlock', 'Threads', '/unlock <thread_id>', 'Re-open a locked thread', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    const was = t.locked;
+    t.locked = false;
+    c.out(was ? '🔓 ' + t.id + ' is open again.' : t.id + ' was not locked.');
+  });
+
+  def('pin', 'Threads', '/pin <thread_id>', 'Fix a thread to the top of the feed', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    if (t.pinned) { c.info(t.id + ' is already pinned.'); return; }
+    t.pinned = true;
+    c.out('📌 ' + t.id + ' pinned to the top.');
+  });
+
+  def('unpin', 'Threads', '/unpin <thread_id>', 'Return a thread to normal sorting', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    const was = t.pinned;
+    t.pinned = false;
+    c.out(was ? '📍 ' + t.id + ' unpinned.' : t.id + ' was not pinned.');
+  });
+
+  def('sticky', 'Threads', '/sticky <thread_id>', 'Alternative name for /pin', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    t.pinned = true;
+    c.out('📌 ' + t.id + ' stuck to the top.');
+  });
+
+  def('move', 'Threads', '/move <thread_id> <board>', 'Relocate a topic to another board', (c) => {
+    const t = needThread(c, 0);
+    if (!t) return;
+    const cat = needCat(c, 1);
+    if (!cat) return;
+    t.cat = cat.id;
+    c.out('📦 Moved “' + plain(t.title).slice(0, 40) + '” → ~/' + cat.id + '.');
+  });
+
+  def('merge', 'Threads', '/merge <thread_1> <thread_2>', 'Combine two threads into one', (c) => {
+    const t1 = needThread(c, 0);
+    if (!t1) return;
+    const t2 = needThread(c, 1);
+    if (!t2) return;
+    if (t1.id === t2.id) { c.err('Pick two different threads.'); return; }
+    const moved = t2.replies.length;
+    t1.replies = t1.replies.concat(t2.replies);
+    t2.replies = [];
+    t2.deleted = true;
+    c.out('🔗 Merged ' + moved + ' repl' + (moved === 1 ? 'y' : 'ies') + ' from ' +
+      t2.id + ' into ' + t1.id + '. ' + t2.id + ' archived — /restore ' + t2.id + ' brings it back.');
+  });
+
+  def('split', 'Threads', '/split <comment_id>', 'Spin a comment out into its own topic', (c) => {
+    const f = needReply(c);
+    if (!f) return;
+    const t = f.t;
+    const r = f.r;
+    const sub = new Set([r.id]);
+    let grew = true;
+    while (grew) {                          // take the comment's descendants with it
+      grew = false;
+      t.replies.forEach((x) => {
+        if (x.parent && sub.has(x.parent) && !sub.has(x.id)) { sub.add(x.id); grew = true; }
+      });
+    }
+    const moving = t.replies.filter((x) => sub.has(x.id));
+    t.replies = t.replies.filter((x) => !sub.has(x.id));
+    const root = moving.find((x) => x.id === r.id);
+    if (root) root.parent = null;           // it's the root of its own thread now
+    const title = (plain(r.body).slice(0, 70) || 'Untitled') +
+      (plain(r.body).length > 70 ? '…' : '');
+    const nt = {
+      id: uid('t'), title, body: r.body, cat: t.cat, author: r.author,
+      tags: ['split'], created: Date.now(), up: [], down: [], replies: moving,
+      locked: false, pinned: false, featured: false, hidden: false, deleted: false, reports: [],
+    };
+    db.threads.unshift(nt);
+    c.out('✂ Split ' + r.id + ' into ' + nt.id + ' (“' + title + '”) in ~/' +
+      nt.cat + ' — ' + moving.length + ' comment' + (moving.length === 1 ? '' : 's') +
+      ' moved with it.');
+  });
+
+  def('hide', 'Threads', '/hide <post_id>', 'Mask a post from public view (staff keep it)', (c) => {
+    const it = needItem(c);
+    if (!it) return;
+    if (it.kind === 'thread') {
+      it.t.hidden = true;
+      c.out('🙈 Thread ' + it.t.id + ' hidden — staff can still see it.');
+    } else {
+      it.r.hidden = true;
+      c.out('🙈 Comment ' + it.r.id + ' hidden — preserved for staff review.');
+    }
+  });
+
+  def('delete', 'Threads', '/delete <post_id>', 'Remove a post or comment from public view', (c) => {
+    const it = needItem(c);
+    if (!it) return;
+    const item = it.kind === 'thread' ? it.t : it.r;
+    if (item.deleted) { c.info(item.id + ' is already deleted.'); return; }
+    item.deleted = true;
+    c.out('🗑 ' + item.id + ' removed — /restore ' + item.id + ' recovers it.');
+  });
+
+  def('restore', 'Threads', '/restore <post_id>', 'Recover a deleted post or thread', (c) => {
+    const it = needItem(c);
+    if (!it) return;
+    const item = it.kind === 'thread' ? it.t : it.r;
+    if (!item.deleted) { c.info(item.id + ' was not deleted.'); return; }
+    item.deleted = false;
+    c.out('♻ ' + item.id + ' is back in public view.');
+  });
+
+  def('feature', 'Threads', '/feature <thread_id>', 'Spotlight a thread on the feed', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    if (t.featured) { c.info(t.id + ' is already featured.'); return; }
+    t.featured = true;
+    c.out('⭐ ' + t.id + ' featured at the top of the feed.');
+  });
+
+  def('unfeature', 'Threads', '/unfeature <thread_id>', 'Remove the featured spotlight', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    const was = t.featured;
+    t.featured = false;
+    c.out(was ? ' ' + t.id + ' no longer featured.'.replace(' ', '') : t.id + ' was not featured.');
+  });
+
+  def('editpost', 'Threads', '/editpost <post_id> <new text>', 'Rewrite the text of a post', (c) => {
+    const it = needItem(c);
+    if (!it) return;
+    const text = c.a.slice(1).join(' ').trim();
+    if (!text) { c.err('Usage: ' + c.usage); return; }
+    if (it.kind === 'thread') it.t.body = text;
+    else it.r.body = text;
+    c.out('✏ Edited ' + (it.kind === 'thread' ? 'post ' : 'comment ') +
+      (it.kind === 'thread' ? it.t.id : it.r.id) + '.');
+  });
+
+  /* Boards */
+  def('lockcategory', 'Boards', '/lockcategory <board>', 'Freeze a board to new topics', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    const st = db.catState[cat.id] = db.catState[cat.id] || {};
+    st.locked = true;
+    c.out('🧊 ~/' + cat.id + ' locked — no new topics (existing threads stay open).');
+  });
+
+  def('unlockcategory', 'Boards', '/unlockcategory <board>', 'Re-open a board to new topics', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    const st = db.catState[cat.id] = db.catState[cat.id] || {};
+    st.locked = false;
+    c.out('🔓 ~/' + cat.id + ' accepts new topics again.');
+  });
+
+  def('createcategory', 'Boards', '/createcategory <name>', 'Create a brand new board', (c) => {
+    const name = c.a.join(' ').trim();
+    if (!name) { c.err('Usage: ' + c.usage); return; }
+    const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24) || uid('c');
+    let id = base;
+    let n = 2;
+    while (allCats().some((x) => x.id === id)) id = base + '-' + (n++);
+    db.cats.push({ id, name: name.slice(0, 40), icon: '📂', desc: 'Created by staff' });
+    c.out('📁 Created board ~/' + id + ' (“' + name + '”).');
+  });
+
+  def('deletecategory', 'Boards', '/deletecategory <board>', 'Remove a board and its content', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    if (COMMUNITIES.some((x) => x.id === cat.id)) {
+      c.err('Built-in boards can be locked or renamed, but not deleted.');
+      return;
+    }
+    const n = db.threads.filter((t) => t.cat === cat.id).length;
+    db.threads = db.threads.filter((t) => t.cat !== cat.id);
+    db.cats = db.cats.filter((x) => x.id !== cat.id);
+    delete db.catState[cat.id];
+    db.catOrder = db.catOrder.filter((x) => x !== cat.id);
+    c.out('🗑 Removed ~/' + cat.id + ' along with ' + n + ' thread' + (n === 1 ? '' : 's') + '.');
+  });
+
+  def('renamecategory', 'Boards', '/renamecategory <board> <new name>', 'Rename a board', (c) => {
+    const cat = needCat(c, 0);
+    if (!cat) return;
+    const name = c.a.slice(1).join(' ').trim();
+    if (!name) { c.err('Usage: ' + c.usage); return; }
+    const st = db.catState[cat.id] = db.catState[cat.id] || {};
+    st.name = name.slice(0, 40);
+    c.out('✏ Board ~/' + cat.id + ' is now “' + st.name + '”.');
+  });
+
+  def('setpermissions', 'Boards', '/setpermissions <board> <group> <access>',
+    'Set read/write access (write | read | none)', (c) => {
+      const cat = needCat(c, 0);
+      if (!cat) return;
+      const g = (c.a[1] || '').toLowerCase();
+      const lvl = (c.a[2] || '').toLowerCase();
+      const groups = { member: 'member', members: 'member', everyone: 'member', mod: 'mod', moderator: 'mod', admin: 'admin' };
+      const levels = { write: 'write', post: 'write', read: 'read', none: 'none' };
+      if (!groups[g] || !levels[lvl]) {
+        c.err('Usage: ' + c.usage + '  — groups: member|mod|admin, access: write|read|none');
+        return;
+      }
+      const st = db.catState[cat.id] = db.catState[cat.id] || {};
+      st.perms = st.perms || {};
+      st.perms[groups[g]] = levels[lvl];
+      c.out('🔐 ~/' + cat.id + ': ' + groups[g] + ' now has ' + levels[lvl] + ' access.');
+    });
+
+  def('reorderboards', 'Boards', '/reorderboards <id,id,…>', 'Change the board display order', (c) => {
+    if (!c.a.length) {
+      c.err('Usage: ' + c.usage + '  — e.g. /reorderboards general,help,showcase');
+      c.info('Current order: ' + allCats().map((x) => x.id).join(', '));
+      return;
+    }
+    const keys = c.rest.split(/[,\s]+/).filter(Boolean);
+    const ids = [];
+    keys.forEach((k) => { const cat = findCat(k); if (cat && !ids.includes(cat.id)) ids.push(cat.id); });
+    if (!ids.length) { c.err('No matching boards in that list.'); return; }
+    db.catOrder = ids;
+    c.out('↕ Order set: ' + allCats().map((x) => x.id).join(' → '));
+    const skipped = keys.length - ids.length;
+    if (skipped > 0) c.info('   ' + skipped + ' unknown id' + (skipped === 1 ? '' : 's') + ' skipped.');
+  });
+
+  /* Queue */
+  def('reviewqueue', 'Queue', '/reviewqueue', 'Open the moderation dashboard', (c) => {
+    const rows = [];
+    db.threads.forEach((t) => {
+      if (t.reports && t.reports.length) rows.push([t, 'post']);
+      (t.replies || []).forEach((r) => { if (r.reports && r.reports.length) rows.push([r, 'comment']); });
+    });
+    if (!rows.length) { c.out('✅ Review queue is empty — nothing awaiting staff review.'); return; }
+    c.out(rows.length + ' item' + (rows.length === 1 ? '' : 's') + ' awaiting review:', 'info');
+    rows.forEach(([item, kind]) => {
+      const escalated = item.reports.some((rp) => rp.escalated) ? ' [escalated]' : '';
+      const label = kind === 'post'
+        ? '“' + plain(item.title).slice(0, 46) + '”'
+        : 'comment on ' + threadOfItem(item);
+      c.info('  ' + item.id + '  ' + kind + '  by ' + user(item.author).name + ' — ' +
+        label + ' — ' + item.reports.length + ' flag' +
+        (item.reports.length === 1 ? '' : 's') + escalated);
+    });
+    c.info('Use: /approve post <id>, /reject post <id>, /clearreports <id>, /escalate <report_id>');
+  });
+
+  const threadOfItem = (r) => {
+    const t = db.threads.find((x) => (x.replies || []).some((y) => y.id === r.id));
+    return t ? plain(t.title).slice(0, 34) : 'a thread';
+  };
+
+  def('clearreports', 'Queue', '/clearreports <post_id>', 'Dismiss flags on an accepted item', (c) => {
+    const it = needItem(c);
+    if (!it) return;
+    const item = it.kind === 'thread' ? it.t : it.r;
+    if (!item.reports.length) { c.info('No reports on record for ' + item.id + '.'); return; }
+    const n = item.reports.length;
+    item.reports = [];
+    c.out('🧹 Cleared ' + n + ' flag' + (n === 1 ? '' : 's') + ' on ' + item.id + '.');
+  });
+
+  def('reject', 'Queue', '/reject post <post_id>', 'Discard a flagged post and penalise the author', (c) => {
+    if ((c.a[0] || '').toLowerCase() !== 'post') { c.err('Usage: ' + c.usage); return; }
+    const it = needItem(c, 1);
+    if (!it) return;
+    const item = it.kind === 'thread' ? it.t : it.r;
+    item.hidden = true;
+    item.reports = [];
+    const au = db.users[item.author];
+    if (au) {
+      au.warnings = au.warnings || [];
+      au.warnings.unshift({ at: Date.now(), by: db.currentUserId, reason: 'Post rejected in review queue' });
+    }
+    c.out('❌ ' + item.id + ' rejected and hidden — automatic penalty recorded' +
+      (au ? ' for ' + au.name : '') + '.');
+  });
+
+  def('escalate', 'Queue', '/escalate <report_id>', 'Pass a report up to senior staff', (c) => {
+    const key = c.a[0];
+    if (!key) { usageErr(c); return; }
+    let n = 0;
+    const byReport = [];
+    allItems().forEach((it) => (it.reports || []).forEach((rp) => {
+      if (rp.id === key) byReport.push(rp);
+      else if (it.id === key && !rp.escalated) { rp.escalated = true; n++; }
+    }));
+    byReport.forEach((rp) => { if (!rp.escalated) { rp.escalated = true; n++; } });
+    if (!n) { c.err('No pending report matches "' + key + '"'); return; }
+    c.out('⬆ Escalated ' + n + ' report' + (n === 1 ? '' : 's') + ' to senior staff.');
+  });
+
+  /* System */
+  def('maintenance', 'System', '/maintenance on|off', 'Take the forum offline or bring it back', (c) => {
+    const v = (c.a[0] || '').toLowerCase();
+    if (v !== 'on' && v !== 'off') { c.err('Usage: ' + c.usage); return; }
+    db.maintenance = v === 'on';
+    c.out(db.maintenance
+      ? '🛠 Maintenance mode ON — non-admin visitors now see an offline screen.'
+      : '🚀 Maintenance mode OFF — public access restored.');
+  });
+
+  def('clearcache', 'System', '/clearcache', 'Flush UI state and rebuild every view', (c) => {
+    ui.draft = '';
+    ui.replyTo = null;
+    ui.lastPath = null;
+    c.out('🧹 UI state cleared — layout rebuilt on the next paint.');
+  });
+
+  def('rebuildindices', 'System', '/rebuildindices', 'Re-index all posts for search', (c) => {
+    const docs = db.threads.reduce((n, t) => n + 1 + t.replies.length, 0);
+    db.lastIndexed = { at: Date.now(), docs };
+    c.out('🔍 Search index rebuilt — ' + docs + ' documents (posts + comments).');
+  });
+
+  def('backup', 'System', '/backup now', 'Export a snapshot of the whole community', (c) => {
+    if ((c.a[0] || '').toLowerCase() !== 'now') { c.err('Usage: ' + c.usage); return; }
+    try {
+      const json = JSON.stringify(db, null, 2);
+      const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'bashforum-backup-' + new Date().toISOString().slice(0, 10) + '.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      c.out('💾 Snapshot exported — ' + db.threads.length + ' threads, ' +
+        Object.keys(db.users).length + ' users, ' + Object.keys(db.accounts).length + ' accounts.');
+    } catch (err) {
+      c.err('Export failed here: ' + err.message);
+    }
+  });
+
+  def('runstats', 'System', '/runstats', 'Recalculate global forum statistics', (c) => {
+    const users = Object.keys(db.users).length;
+    const threads = db.threads.length;
+    const comments = db.threads.reduce((n, t) => n + t.replies.length, 0);
+    const votes = allItems().reduce((n, it) => n + (it.up || []).length + (it.down || []).length, 0);
+    db.lastStats = { at: Date.now(), users, threads, comments, votes };
+    c.out('📊 Statistics recomputed and cached:', 'info');
+    c.info('   members ' + users + ' · threads ' + threads + ' · comments ' + comments + ' · votes ' + votes);
+    c.info('   stamped ' + new Date(db.lastStats.at).toLocaleTimeString());
+  });
+
+  def('viewlogs', 'System', '/viewlogs', 'Open the staff audit log', (c) => {
+    if (!db.audit.length) { c.out('No audit entries yet.'); return; }
+    c.out('Audit log — ' + db.audit.length + ' entr' + (db.audit.length === 1 ? 'y' : 'ies') +
+      ' (newest first):', 'info');
+    db.audit.slice(0, 40).forEach((e) => c.info('  ' + new Date(e.at).toLocaleString() +
+      '  ' + user(e.by).name + '  /' + e.cmd + '  ' + (e.detail || '')));
+    if (db.audit.length > 40) c.info('  … ' + (db.audit.length - 40) + ' older entries');
+  });
+
+  def('broadcast', 'System', '/broadcast <message>', 'Post a site-wide banner (or “clear”)', (c) => {
+    const msg = c.a.join(' ').trim();
+    if (!msg) { c.err('Usage: ' + c.usage + '  |  /broadcast clear'); return; }
+    if (msg.toLowerCase() === 'clear') {
+      db.banner = null;
+      c.out('🧹 Broadcast cleared.');
+      return;
+    }
+    db.banner = msg.slice(0, 200);
+    c.out('📣 Broadcast set — now visible to everyone: “' + db.banner + '”');
+  });
+
+  def('plugin', 'System', '/plugin enable <name>', 'Enable or disable an add-on module', (c) => {
+    const sub = (c.a[0] || '').toLowerCase();
+    const name = (c.a[1] || '').toLowerCase();
+    if (sub === 'enable' && name) {
+      db.plugins[name] = true;
+      c.out('🧩 Plugin “' + name + '” enabled.');
+      if (name === 'leaderboard') c.info('   Top-members strip now shows above the feed.');
+    } else if (sub === 'disable' && name) {
+      delete db.plugins[name];
+      c.out('🧩 Plugin “' + name + '” disabled.');
+    } else if (!sub) {
+      const on = Object.keys(db.plugins).filter((k) => db.plugins[k]);
+      c.info('Usage: /plugin enable <name> | /plugin disable <name>');
+      c.info('Active: ' + (on.length ? on.join(', ') : 'none') + ' · bundled: leaderboard');
+    } else {
+      c.err('Usage: ' + c.usage);
+    }
+  });
+
+  /* ---- console wiring ---- */
+
+  document.addEventListener('submit', (e) => {
+    if (!e.target || e.target.id !== 'cmdForm') return;
+    e.preventDefault();
+    const inp = $('#cmdInput');
+    const raw = inp ? inp.value : '';
+    if (raw.trim()) {
+      cmdState.hist.push(raw.trim());
+      if (cmdState.hist.length > 60) cmdState.hist.shift();
+    }
+    cmdState.hi = cmdState.hist.length;
+    if (inp) inp.value = '';
+    runCommand(raw);
+  });
+
+  const cmdInputEl = $('#cmdInput');
+  if (cmdInputEl) cmdInputEl.addEventListener('keydown', (e) => {
+    if (!cmdState.hist.length) return;
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      cmdState.hi = Math.max(0, cmdState.hi - 1);
+      e.target.value = cmdState.hist[cmdState.hi] || '';
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      cmdState.hi = Math.min(cmdState.hist.length, cmdState.hi + 1);
+      e.target.value = cmdState.hist[cmdState.hi] || '';
+    }
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && (e.key === '`' || e.key === '~')) {
+      e.preventDefault();
+      const m = $('#cmdModal');
+      if (!m) return;
+      if (m.classList.contains('hidden')) openCmd();
+      else closeCmd();
+    } else if (e.key === 'Escape') {
+      const m = $('#cmdModal');
+      if (m && !m.classList.contains('hidden') && m.contains(document.activeElement)) closeCmd();
+    }
+  });
+
   /* ---------------- boot ---------------- */
+
+  /* handle for automated tests — no user-facing surface */
+  window.__bashforum = { db: () => db, render, run: (s) => runCommand(s) };
 
   if (!location.hash) location.hash = '#/';
   render();
