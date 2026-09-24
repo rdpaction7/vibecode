@@ -6,7 +6,7 @@ A community forum for shell tinkerers, script addicts and prompt customizers.
 
 Any static file server works:
 
-```bash
+```bash/
 python3 -m http.server 8080
 # then open http://127.0.0.1:8080
 ```

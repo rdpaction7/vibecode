@@ -104,10 +104,74 @@
     box.classList.add('shake');
   }
 
-  const paragraphs = (text) => String(text)
-    .split(/\n{2,}/)
-    .map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`)
-    .join('');
+  /* markdown-lite: `inline code`, ```fenced blocks```, **bold**, *italic*, links */
+  const mdLink = (u) => {
+    try {
+      const url = new URL(u, location.href);
+      return /^(https?:|mailto:)$/.test(url.protocol) ? url.href : null;
+    } catch (e) { return null; }
+  };
+
+  function md(text) {
+    const blocks = [];
+    const codes = [];
+    const links = [];
+    let s = String(text || '').replace(/\u0000/g, '');
+
+    /* fenced code blocks — extracted first so nothing else touches them */
+    s = s.replace(/```([a-zA-Z0-9+#-]*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+      blocks.push({ lang, code });
+      return '\u0000B' + (blocks.length - 1) + '\u0000';
+    });
+
+    /* inline code */
+    s = s.replace(/`([^`\n]+)`/g, (m, code) => {
+      codes.push(code);
+      return '\u0000C' + (codes.length - 1) + '\u0000';
+    });
+
+    s = esc(s);
+
+    /* [label](url) — http(s)/mailto/relative only; anything else renders as plain label */
+    s = s.replace(/\[([^\]\n]+)\]\(([^()\s]+)\)/g, (m, label, href) => {
+      const safe = mdLink(href);
+      if (!safe) return label;
+      links.push({ label, href: esc(safe) });
+      return '\u0000L' + (links.length - 1) + '\u0000';
+    });
+
+    /* bold, then italic */
+    s = s.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|[^*\w])\*([^*\n]+)\*(?![*\w])/g, '$1<em>$2</em>');
+
+    /* bare URLs */
+    s = s.replace(/(^|[\s(])https?:\/\/[^\s<]+/g, (m, pre) => {
+      const full = m.slice(pre.length);
+      const raw = full.replace(/[.,;:!?)\]]+$/, '');
+      const safe = mdLink(raw);
+      if (!safe) return m;
+      return pre + '<a href="' + esc(safe) + '" target="_blank" rel="noopener noreferrer">' +
+        raw + '</a>' + full.slice(raw.length);
+    });
+
+    /* paragraphs — block placeholders stay outside <p> */
+    const html = s.split(/\n{2,}/).map((chunk) => {
+      const inner = chunk.replace(/\n/g, '<br>');
+      return /^\u0000B\d+\u0000$/.test(inner) ? inner : '<p>' + inner + '</p>';
+    }).join('');
+
+    /* restore protected pieces */
+    return html
+      .replace(/\u0000B(\d+)\u0000/g, (m, i) => {
+        const b = blocks[+i];
+        return '<pre class="md-pre">' +
+          (b.lang ? '<span class="md-lang">' + esc(b.lang) + '</span>' : '') +
+          '<code>' + esc(b.code.replace(/\n$/, '')) + '</code></pre>';
+      })
+      .replace(/\u0000C(\d+)\u0000/g, (m, i) => '<code class="md-code">' + esc(codes[+i]) + '</code>')
+      .replace(/\u0000L(\d+)\u0000/g, (m, i) => '<a href="' + links[+i].href +
+        '" target="_blank" rel="noopener noreferrer">' + links[+i].label + '</a>');
+  }
 
   const plain = (text) => String(text).replace(/\s+/g, ' ').trim();
 
@@ -316,7 +380,7 @@
 
   /* ---------------- state helpers ---------------- */
 
-  const ui = { draft: '', replyTo: null, lastPath: null };
+  const ui = { draft: '', replyTo: null, lastPath: null, cSort: 'best', collapsed: new Set() };
   const me = () => db.users[db.currentUserId];
   const user = (id) => db.users[id] || { id, name: 'Deleted user', joined: Date.now() };
   const community = (id) => allCats().find((c) => c.id === id) ||
@@ -783,7 +847,23 @@
       const key = r.parent || 'root';
       (byParent[key] = byParent[key] || []).push(r);
     });
-    Object.values(byParent).forEach((arr) => arr.sort((x, y) => x.created - y.created));
+
+    const countKids = (id) => (byParent[id] || []).reduce((n, k) => n + 1 + countKids(k.id), 0);
+    const conRatio = (r) => {
+      const u = (r.up || []).length;
+      const d = (r.down || []).length;
+      return Math.max(u, d) ? Math.min(u, d) / Math.max(u, d) : 0;
+    };
+    const cmpBy = {
+      new: (x, y) => y.created - x.created,
+      top: (x, y) => (score(y) - score(x)) || (y.created - x.created),
+      best: (x, y) => (score(y) * 2 + countKids(y.id) * 3 - score(x) * 2 - countKids(x.id) * 3) ||
+        (y.created - x.created),
+      controversial: (x, y) => (conRatio(y) - conRatio(x)) ||
+        (Math.abs(score(x)) - Math.abs(score(y))) || (y.created - x.created),
+    };
+    const cmpComments = cmpBy[ui.cSort] || cmpBy.best;
+    Object.values(byParent).forEach((arr) => arr.sort(cmpComments));
 
     const renderComment = (r) => {
       const ru = user(r.author);
@@ -805,8 +885,10 @@
           </div>`;
       }
 
+      const collapsed = ui.collapsed.has(r.id);
+      const kc = kids.length ? countKids(r.id) : 0;
       return `
-        <div class="comment" id="reply-${r.id}">
+        <div class="comment${collapsed ? ' is-folded' : ''}" id="reply-${r.id}">
           <div class="c-head">
             ${avatar(ru, 22)}
             <a class="author" href="#/user/${r.author}">${esc(ru.name)}</a>${badges(ru)}
@@ -814,13 +896,16 @@
             ${stChips(r)}
             ${miniVote(r, 'reply', t.id)}
           </div>
-          <div class="c-body">${paragraphs(r.body)}</div>
+          <div class="c-body">${md(r.body)}</div>
           <div class="c-actions">
             ${mayReply ? `<button class="link-btn" data-action="reply-to" data-id="${r.id}" data-name="${esc(ru.name)}">↩ Reply</button>` : ''}
+            ${kids.length ? `<button class="link-btn" data-action="fold" data-id="${r.id}">▾ Fold${kc ? ' (' + kc + ')' : ''}</button>` : ''}
             ${own ? `<button class="link-btn danger" data-action="del-reply" data-id="${r.id}" data-tid="${t.id}">Delete</button>` : ''}
             ${!own ? `<button class="link-btn" data-action="report" data-kind="reply" data-id="${r.id}" data-tid="${t.id}">⚑ Report</button>` : ''}
           </div>
-          ${kids.length ? `<div class="c-kids">${kids.map(renderComment).join('')}</div>` : ''}
+          ${kids.length ? (collapsed
+            ? `<button class="c-fold" data-action="fold" data-id="${r.id}">▸ ${kc} ${kc === 1 ? 'reply hidden' : 'replies hidden'} — click to expand</button>`
+            : `<div class="c-kids">${kids.map(renderComment).join('')}</div>`) : ''}
         </div>`;
     };
 
@@ -849,7 +934,7 @@
             <h1 class="post-title">${esc(t.title)}</h1>
             ${stChips(t) ? `<div class="st-row">${stChips(t)}</div>` : ''}
             ${t.tags.length ? `<div class="post-tags">${t.tags.map(tagChip).join('')}</div>` : ''}
-            <div class="post-body">${paragraphs(t.body)}</div>
+            <div class="post-body">${md(t.body)}</div>
 
             <div class="post-foot solid">
               <span class="foot-item">💬 ${n} ${n === 1 ? 'Comment' : 'Comments'}</span>
@@ -870,7 +955,7 @@
             </div>
             <textarea name="body" id="replyBody" rows="3" placeholder="Add a comment…">${esc(ui.draft)}</textarea>
             <div class="composer-foot">
-              <span class="hint">Leave a blank line to start a new paragraph</span>
+              <span class="hint">Markdown: \`code\`, **bold**, blank line = new paragraph</span>
               <button class="btn btn-primary" type="submit">Comment</button>
             </div>
           </form>` : `
@@ -878,7 +963,14 @@
             ? '🔒 This conversation is locked — no new comments.'
             : "You don't have permission to comment in this board."}</div>`}
 
-          <div class="comments-head">${n} ${n === 1 ? 'Comment' : 'Comments'}</div>
+          <div class="comments-head">
+            <span>${n} ${n === 1 ? 'Comment' : 'Comments'}</span>
+            <span class="c-sortbar">
+              ${[['best', 'Best'], ['top', 'Top'], ['new', 'New'], ['controversial', 'Controversial']]
+                .map(([k, lbl]) => `<button type="button" class="c-sort${ui.cSort === k ? ' active' : ''}" data-action="c-sort" data-sort="${k}" aria-pressed="${ui.cSort === k}">${lbl}</button>`)
+                .join('')}
+            </span>
+          </div>
           <div class="comments">
             ${roots || `<div class="empty"><div class="big">💬</div><h3>No comments yet</h3>
                         <p>Say something — the first comment always matters most.</p></div>`}
@@ -935,7 +1027,9 @@
         <div class="field">
           <label for="nt-body">Text</label>
           <textarea id="nt-body" name="body" rows="9" placeholder="Write your post…" required></textarea>
-          <div class="help">Leave a blank line to start a new paragraph.</div>
+          <div class="help md-hint">Markdown: \`code\`, **bold**, *italic*, [links](https://example.com), \`\`\` fenced blocks. Blank line = new paragraph.</div>
+          <button type="button" class="btn btn-ghost btn-sm md-prev-btn" data-action="md-preview">👁 Preview</button>
+          <div class="md-preview hidden" id="ntPreview"></div>
         </div>
 
         <div class="form-actions">
@@ -943,6 +1037,16 @@
           <button class="btn btn-primary" type="submit">Post</button>
         </div>
       </form>`;
+
+    const ntBody = $('#nt-body');
+    if (ntBody) ntBody.addEventListener('input', () => {
+      const prev = $('#ntPreview');
+      if (prev && !prev.classList.contains('hidden')) {
+        prev.innerHTML = ntBody.value.trim()
+          ? md(ntBody.value)
+          : '<span class="dim-note">Nothing to preview yet.</span>';
+      }
+    });
   }
 
   function renderUser(id) {
@@ -1184,6 +1288,31 @@
 
     if (action === 'cmd-open') { openCmd(); return; }
     if (action === 'cmd-close') { closeCmd(); return; }
+
+    if (action === 'c-sort') { ui.cSort = el.dataset.sort || 'best'; render(); return; }
+
+    if (action === 'fold') {
+      const fid = el.dataset.id;
+      if (ui.collapsed.has(fid)) ui.collapsed.delete(fid);
+      else ui.collapsed.add(fid);
+      render();
+      return;
+    }
+
+    if (action === 'md-preview') {
+      const prev = $('#ntPreview');
+      const box = $('#nt-body');
+      if (!prev || !box) return;
+      const show = prev.classList.contains('hidden');
+      if (show) {
+        prev.innerHTML = box.value.trim()
+          ? md(box.value)
+          : '<span class="dim-note">Nothing to preview yet.</span>';
+      }
+      prev.classList.toggle('hidden', !show);
+      el.textContent = show ? '🙈 Hide preview' : '👁 Preview';
+      return;
+    }
 
     if (action === 'report') {
       if (!db.currentUserId) { toast('Sign in to flag content'); return; }
@@ -2199,6 +2328,8 @@
     ui.draft = '';
     ui.replyTo = null;
     ui.lastPath = null;
+    ui.cSort = 'best';
+    ui.collapsed.clear();
     c.out('🧹 UI state cleared — layout rebuilt on the next paint.');
   });
 
