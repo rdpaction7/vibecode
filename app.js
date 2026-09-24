@@ -294,6 +294,7 @@
     d.catOrder = Array.isArray(d.catOrder) ? d.catOrder : [];
     d.lastStats = d.lastStats || null;
     d.lastIndexed = d.lastIndexed || null;
+    d.notes = Array.isArray(d.notes) ? d.notes : [];
     Object.values(d.users || {}).forEach((u) => {
       u.warnings = Array.isArray(u.warnings) ? u.warnings : [];
       if (u.role == null) u.role = '';
@@ -304,6 +305,7 @@
       u.suspended = !!u.suspended;
       u.bannedUntil = typeof u.bannedUntil === 'number' ? u.bannedUntil : 0;
       if (u.banReason == null) u.banReason = '';
+      u.saves = Array.isArray(u.saves) ? u.saves : [];
     });
     (d.threads || []).forEach((t) => {
       t.reports = Array.isArray(t.reports) ? t.reports : [];
@@ -476,6 +478,11 @@
     return s;
   };
 
+  const isSaved = (id) => {
+    const u = me();
+    return !!(u && Array.isArray(u.saves) && u.saves.includes(id));
+  };
+
   const stChips = (item) => {
     let s = '';
     if (item.pinned) s += `<span class="st-chip pin" title="Pinned">📌 pinned</span>`;
@@ -483,6 +490,7 @@
     if (item.locked) s += `<span class="st-chip lock" title="Locked">🔒 locked</span>`;
     if (item.hidden) s += `<span class="st-chip hid" title="Hidden">🙈 hidden</span>`;
     if (item.deleted) s += `<span class="st-chip del" title="Deleted">🗑 deleted</span>`;
+    if (item.poll) s += `<span class="st-chip poll" title="Poll">📊 poll</span>`;
     return s;
   };
 
@@ -552,6 +560,16 @@
   };
 
   /* staff actions are recorded for /viewlogs */
+  /* inbox notifications (replies, karma milestones) */
+  function notify(to, text, href) {
+    if (!to || !db.users[to]) return;
+    db.notes.unshift({
+      id: uid('n'), to, text: String(text).slice(0, 140),
+      href: href || '#/', at: Date.now(), read: false,
+    });
+    if (db.notes.length > 60) db.notes.length = 60;
+  }
+
   function audit(cmd, detail) {
     db.audit.unshift({
       at: Date.now(), by: db.currentUserId || 'system',
@@ -588,6 +606,28 @@
         `<span class="karma" title="karma">${fmtNum(karma(u.id))}</span>`
       : `<span class="name">Sign in</span>`;
     $('#themeBtn').textContent = document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️';
+
+    const unread = db.notes.filter((n) => n.to === db.currentUserId && !n.read).length;
+    const bellCount = $('#bellCount');
+    if (bellCount) {
+      bellCount.textContent = unread > 9 ? '9+' : String(unread);
+      bellCount.classList.toggle('hidden', !unread);
+      $('#bellBtn').classList.toggle('has-notes', !!unread);
+    }
+    const panel = $('#notePanel');
+    if (panel) {
+      const mine = db.notes.filter((n) => n.to === db.currentUserId);
+      panel.innerHTML = !db.currentUserId
+        ? '<div class="note-empty">Sign in to get reply &amp; karma alerts.</div>'
+        : !mine.length
+          ? '<div class="note-empty">No notifications yet — you are all caught up.</div>'
+          : mine.slice(0, 12).map((n) => `
+            <button class="note-item${n.read ? '' : ' unread'}" data-action="note-open" data-id="${n.id}">
+              <span class="note-dot" aria-hidden="true"></span>
+              <span class="note-text">${esc(n.text)}</span>
+              <span class="note-when">${fmtTime(n.at)}</span>
+            </button>`).join('');
+    }
   }
 
   function renderNavCats(q, path) {
@@ -723,6 +763,7 @@
               💬 ${t.replies.length} ${t.replies.length === 1 ? 'Comment' : 'Comments'}
             </a>
             <button class="foot-item" data-action="share">⤴ Share</button>
+            ${db.currentUserId ? `<button class="foot-item${isSaved(t.id) ? ' saved' : ''}" data-action="save" data-id="${t.id}">${isSaved(t.id) ? '🔖 Saved' : '🔖 Save'}</button>` : ''}
             ${canFlag ? `<button class="foot-item" data-action="report" data-kind="thread" data-id="${t.id}">⚑ Report</button>` : ''}
             ${mine ? `<button class="foot-item danger" data-action="del-thread" data-id="${t.id}">Delete</button>` : ''}
           </div>
@@ -827,6 +868,35 @@
              <p>${q ? 'Try a different search term.' : 'Be the first to post in this community.'}</p>
              <a class="btn btn-primary" href="#/new">Create a post</a>
            </div>`}`;
+  }
+
+  /* ---------------- poll rendering ---------------- */
+
+  function renderPoll(t) {
+    const p = t.poll;
+    if (!p || !Array.isArray(p.opts) || !p.opts.length) return '';
+    const meId = db.currentUserId;
+    const total = p.opts.reduce((n, o) => n + ((o.voters || []).length), 0);
+    const votedIdx = meId ? p.opts.findIndex((o) => (o.voters || []).includes(meId)) : -1;
+    const voted = votedIdx >= 0;
+    return `
+      <div class="poll" data-tid="${t.id}">
+        <div class="poll-q">📊 ${esc(p.q)}</div>
+        ${p.opts.map((o, i) => {
+          const n = (o.voters || []).length;
+          const pct = total ? Math.round((n / total) * 100) : 0;
+          return voted
+            ? `<div class="poll-opt${i === votedIdx ? ' mine' : ''}">
+                 <div class="poll-bar" style="width:${pct}%"></div>
+                 <span class="poll-label">${esc(o.text)}</span>
+                 <span class="poll-pct">${pct}%</span>
+               </div>`
+            : `<button type="button" class="poll-opt pick" data-action="poll-vote" data-i="${i}">${esc(o.text)}</button>`;
+        }).join('')}
+        <div class="poll-foot">${voted
+          ? `${total} vote${total === 1 ? '' : 's'} · you voted “${esc(p.opts[votedIdx].text)}”`
+          : `${total} vote${total === 1 ? '' : 's'} · pick one`}</div>
+      </div>`;
   }
 
   function renderThread(id) {
@@ -935,10 +1005,12 @@
             ${stChips(t) ? `<div class="st-row">${stChips(t)}</div>` : ''}
             ${t.tags.length ? `<div class="post-tags">${t.tags.map(tagChip).join('')}</div>` : ''}
             <div class="post-body">${md(t.body)}</div>
+            ${t.poll ? renderPoll(t) : ''}
 
             <div class="post-foot solid">
               <span class="foot-item">💬 ${n} ${n === 1 ? 'Comment' : 'Comments'}</span>
               <button class="foot-item" data-action="share">⤴ Share</button>
+              ${db.currentUserId ? `<button class="foot-item${isSaved(t.id) ? ' saved' : ''}" data-action="save" data-id="${t.id}">${isSaved(t.id) ? '🔖 Saved' : '🔖 Save'}</button>` : ''}
               ${mayReply ? `<button class="foot-item" data-action="focus-comment">↩ Reply</button>` : ''}
             </div>
           </article>
@@ -1032,6 +1104,16 @@
           <div class="md-preview hidden" id="ntPreview"></div>
         </div>
 
+        <div class="field">
+          <button type="button" class="btn btn-ghost btn-sm" data-action="poll-toggle" id="pollToggle">📊 Add a poll (optional)</button>
+          <div class="poll-fields hidden" id="pollFields">
+            <label for="nt-pollq">Question</label>
+            <input class="input" id="nt-pollq" name="pollq" maxlength="120" placeholder="Which alias saves your day?" />
+            <label for="nt-pollopts">Options <span style="color:var(--faint);font-weight:500">(2–4, one per line)</span></label>
+            <textarea id="nt-pollopts" name="pollopts" rows="4" placeholder="mkcd&#10;ll -la&#10;cd -"></textarea>
+          </div>
+        </div>
+
         <div class="form-actions">
           <a class="btn btn-ghost" href="#/">Cancel</a>
           <button class="btn btn-primary" type="submit">Post</button>
@@ -1060,6 +1142,9 @@
 
     const mine = u.id === db.currentUserId;
     const started = db.threads.filter((t) => t.author === u.id).sort((a, b) => b.created - a.created);
+    const saved = mine
+      ? (u.saves || []).map((id) => db.threads.find((t) => t.id === id)).filter(Boolean)
+      : [];
     const s = stats(u.id);
     const joined = new Date(u.joined).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
     const handle = 'u/' + u.name.toLowerCase().replace(/\s+/g, '').slice(0, 24);
@@ -1126,6 +1211,10 @@
 
       ${mine && u.muffled
         ? '<div class="card lock-note">🔇 You are muffled — you can read, but not post.</div>' : ''}
+
+      ${saved.length ? `
+        <div class="section-title">🔖 Saved</div>
+        <div class="feed">${saved.map(postRow).join('')}</div>` : ''}
 
       <div class="section-title">Posts by ${esc(u.name)}</div>
       ${started.length
@@ -1254,6 +1343,7 @@
 
     if (!Array.isArray(item.up)) item.up = [];
     if (!Array.isArray(item.down)) item.down = [];
+    const prevScore = score(item);
 
     const who = db.currentUserId;
     const bucket = dir === 'up' ? item.up : item.down;
@@ -1265,6 +1355,14 @@
     else {
       if (oi >= 0) other.splice(oi, 1);       // switch sides
       bucket.push(who);
+    }
+
+    if (kind === 'thread') {
+      if (score(item) < 10) item.milestone10 = false;
+      else if (!item.milestone10 && prevScore < 10 && who !== item.author) {
+        item.milestone10 = true;
+        notify(item.author, `“${plain(item.title).slice(0, 40)}” just passed +10 karma 🎉`, '#/t/' + item.id);
+      }
     }
 
     save();
@@ -1288,6 +1386,65 @@
 
     if (action === 'cmd-open') { openCmd(); return; }
     if (action === 'cmd-close') { closeCmd(); return; }
+
+    if (action === 'bell') {
+      const panel = $('#notePanel');
+      if (panel) panel.classList.toggle('hidden');
+      return;
+    }
+
+    if (action === 'note-open') {
+      const n = db.notes.find((x) => x.id === el.dataset.id);
+      if (!n) return;
+      n.read = true;
+      save();
+      const panel = $('#notePanel');
+      if (panel) panel.classList.add('hidden');
+      if (n.href) location.hash = n.href;
+      render();
+      return;
+    }
+
+    if (action === 'save') {
+      if (!me()) { toast('Sign in to save posts'); return; }
+      const u = me();
+      u.saves = u.saves || [];
+      const sIdx = u.saves.indexOf(el.dataset.id);
+      if (sIdx >= 0) { u.saves.splice(sIdx, 1); toast('Removed from saved'); }
+      else { u.saves.unshift(el.dataset.id); toast('Saved to your profile 🔖'); }
+      save();
+      render();
+      return;
+    }
+
+    if (action === 'poll-vote') {
+      if (!me()) { toast('Sign in to vote'); return; }
+      const wrap = el.closest('.poll');
+      const pThread = wrap && thread(wrap.dataset.tid);
+      if (!pThread || !pThread.poll) return;
+      if (pThread.poll.opts.some((o) => (o.voters || []).includes(db.currentUserId))) {
+        toast('You already voted in this poll');
+        return;
+      }
+      const pOpt = pThread.poll.opts[+el.dataset.i];
+      if (!pOpt) return;
+      (pOpt.voters = pOpt.voters || []).push(db.currentUserId);
+      save();
+      render();
+      toast('Vote counted 📊');
+      return;
+    }
+
+    if (action === 'poll-toggle') {
+      const f = $('#pollFields');
+      if (!f) return;
+      const show = f.classList.contains('hidden');
+      f.classList.toggle('hidden', !show);
+      el.textContent = show ? '📊 Hide poll' : '📊 Add a poll (optional)';
+      return;
+    }
+
+    if (action === 'kb-close') { closeKb(); return; }
 
     if (action === 'c-sort') { ui.cSort = el.dataset.sort || 'best'; render(); return; }
 
@@ -1528,10 +1685,22 @@
         up: [], down: [],
         replies: [],
       };
+      const pollQ = String(fd.get('pollq') || '').trim();
+      const pollOpts = String(fd.get('pollopts') || '').split(/\r?\n/)
+        .map((s) => s.trim()).filter(Boolean).slice(0, 4);
+      let pollNote = '';
+      if (pollQ && pollOpts.length >= 2) {
+        t.poll = {
+          q: pollQ.slice(0, 120),
+          opts: pollOpts.map((text) => ({ text: text.slice(0, 60), voters: [] })),
+        };
+      } else if (pollQ || pollOpts.length) {
+        pollNote = ' — poll skipped (needs a question and 2–4 options)';
+      }
       db.threads.unshift(t);
       save();
       location.hash = '#/t/' + t.id;
-      toast('Post published 🎉');
+      toast('Post published 🎉'.replace(' 🎉', pollNote ? pollNote : ' 🎉'));
       return;
     }
 
@@ -1550,14 +1719,25 @@
         return;
       }
 
+      const newRid = uid('r');
       t.replies.push({
-        id: uid('r'),
+        id: newRid,
         parent: ui.replyTo && t.replies.some((r) => r.id === ui.replyTo) ? ui.replyTo : null,
         author: db.currentUserId,
         body,
         created: Date.now(),
         up: [], down: [],
       });
+      if (t.author !== db.currentUserId) {
+        notify(t.author, `${user(db.currentUserId).name} commented on “${plain(t.title).slice(0, 40)}”`, '#/t/' + t.id);
+      }
+      const parentId = (t.replies.find((r) => r.id === newRid) || {}).parent;
+      if (parentId) {
+        const pr = t.replies.find((r) => r.id === parentId);
+        if (pr && pr.author !== db.currentUserId && pr.author !== t.author) {
+          notify(pr.author, `${user(db.currentUserId).name} replied to your comment`, '#/t/' + t.id);
+        }
+      }
       ui.draft = '';
       ui.replyTo = null;
       save();
@@ -2449,6 +2629,51 @@
     } else if (e.key === 'Escape') {
       const m = $('#cmdModal');
       if (m && !m.classList.contains('hidden') && m.contains(document.activeElement)) closeCmd();
+    }
+  });
+
+  /* ---------------- keyboard shortcuts ---------------- */
+
+  function openKb() { const m = $('#kbModal'); if (m) m.classList.remove('hidden'); }
+  function closeKb() { const m = $('#kbModal'); if (m) m.classList.add('hidden'); }
+
+  const typingIn = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' ||
+    el.tagName === 'SELECT' || el.isContentEditable);
+
+  document.addEventListener('keydown', (e) => {
+    const openModal = ['#cmdModal', '#kbModal'].some((s) => {
+      const m = $(s);
+      return m && !m.classList.contains('hidden');
+    });
+
+    if (e.key === 'Escape') {
+      const panel = $('#notePanel');
+      if (panel && !panel.classList.contains('hidden')) panel.classList.add('hidden');
+      closeKb();
+      return;
+    }
+    if (typingIn(e.target) || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === '?') { e.preventDefault(); if (openModal) closeKb(); else openKb(); return; }
+    if (openModal) return;
+    if (e.key === '/') { e.preventDefault(); const s = $('#search'); if (s) s.focus(); return; }
+    if (e.key === 'c') { if (me()) location.hash = '#/new'; return; }
+    if (e.key === 'j' || e.key === 'k') {
+      const rows = [...document.querySelectorAll('.post-row')];
+      if (!rows.length) return;
+      e.preventDefault();
+      let i = rows.findIndex((r) => r.classList.contains('is-cursor'));
+      i = e.key === 'j' ? Math.min(rows.length - 1, i + 1) : Math.max(0, i - 1);
+      rows.forEach((r) => r.classList.remove('is-cursor'));
+      rows[i].classList.add('is-cursor');
+      rows[i].scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    if (e.key === 'Enter' && (e.target === document.body || e.target === document.documentElement)) {
+      const cur = document.querySelector('.post-row.is-cursor');
+      if (cur && cur.dataset.href) {
+        e.preventDefault();
+        location.hash = cur.dataset.href;
+      }
     }
   });
 

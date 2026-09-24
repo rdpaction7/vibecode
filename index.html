@@ -32,6 +32,7 @@
       </div>
 
       <div class="topbar-actions">
+        <button class="icon-btn bell-btn" data-action="bell" id="bellBtn" title="Notifications (press ? for shortcuts)" aria-label="Notifications">🔔<span class="bell-count hidden" id="bellCount" aria-hidden="true"></span></button>
         <button class="icon-btn cmd-btn" data-action="cmd-open" id="cmdBtn" title="Moderation console (Ctrl + `)" aria-label="Moderation console">&gt;_</button>
         <button class="icon-btn" data-action="theme" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
         <a class="btn btn-primary btn-new" href="#/new"><span class="plus">＋</span><span class="label">New Post</span></a>
@@ -51,6 +52,8 @@
       <div class="nav-group" id="navCats"></div>
     </div>
   </nav>
+
+  <div class="note-panel hidden" id="notePanel" aria-label="Notifications"></div>
 </div>
 
 <div class="site-banner hidden" id="siteBanner"></div>
@@ -115,6 +118,26 @@
       <input id="cmdInput" autocomplete="off" spellcheck="false" placeholder="type a command — /help lists them" aria-label="Command" />
     </form>
     <div class="cmd-hint">Enter runs · ↑ ↓ history · Esc closes</div>
+  </div>
+</div>
+
+<!-- keyboard shortcuts -->
+<div class="modal hidden" id="kbModal" role="dialog" aria-label="Keyboard shortcuts">
+  <div class="kb-card">
+    <div class="cmd-head">
+      <span class="cmd-title">⌨ keyboard shortcuts</span>
+      <button class="icon-btn" data-action="kb-close" aria-label="Close shortcuts">✕</button>
+    </div>
+    <div class="kb-list">
+      <div class="kb-row"><kbd>j</kbd><span>Next post in the feed</span></div>
+      <div class="kb-row"><kbd>k</kbd><span>Previous post</span></div>
+      <div class="kb-row"><kbd>Enter</kbd><span>Open the highlighted post</span></div>
+      <div class="kb-row"><kbd>c</kbd><span>Create a new post</span></div>
+      <div class="kb-row"><kbd>/</kbd><span>Jump to search</span></div>
+      <div class="kb-row"><kbd>?</kbd><span>Show this help</span></div>
+      <div class="kb-row"><kbd>Esc</kbd><span>Close panels</span></div>
+      <div class="kb-row"><kbd>Ctrl</kbd><kbd>`</kbd><span>Moderation console</span></div>
+    </div>
   </div>
 </div>
 

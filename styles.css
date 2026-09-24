@@ -844,6 +844,86 @@ textarea::placeholder, .input::placeholder { color: var(--faint); }
 .comment.is-folded > .c-body,
 .comment.is-folded > .c-actions { display: none; }
 
+/* ---------------- saves, notifications, shortcuts, polls ---------------- */
+
+.header { position: relative; }
+.foot-item.saved { color: var(--accent); font-weight: 700; }
+.post-row.is-cursor { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+.bell-btn { position: relative; }
+.bell-count {
+  position: absolute; top: 1px; right: -1px; min-width: 15px; height: 15px; padding: 0 4px;
+  border-radius: 999px; background: #ef4444; color: #fff;
+  font-size: 9.5px; font-weight: 800; line-height: 15px; text-align: center;
+}
+
+.note-panel {
+  position: absolute; top: 100%; right: 14px; z-index: 95;
+  width: min(360px, 92vw); max-height: 62vh; overflow-y: auto;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, .35); padding: 8px;
+}
+.note-empty { padding: 18px 14px; text-align: center; color: var(--muted); font-size: 13px; }
+.note-item {
+  display: flex; align-items: center; gap: 9px; width: 100%; text-align: left;
+  padding: 9px 10px; border: 0; border-radius: 9px; background: transparent;
+  cursor: pointer; color: var(--text); font-size: 13px; transition: background .12s;
+}
+.note-item:hover { background: var(--surface-2); }
+.note-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: transparent; }
+.note-item.unread .note-dot { background: var(--accent); }
+.note-item.unread .note-text { font-weight: 700; }
+.note-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.note-when { flex: 0 0 auto; font-size: 11px; color: var(--faint); }
+
+.kb-card {
+  width: min(430px, 92vw); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .45);
+}
+.kb-list { padding: 10px 16px 16px; }
+.kb-row { display: flex; align-items: center; gap: 12px; padding: 7px 0; font-size: 13.5px; }
+.kb-row kbd {
+  font-family: var(--mono); font-size: 11.5px; font-weight: 700;
+  min-width: 26px; text-align: center; padding: 3px 8px;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--surface-2); box-shadow: 0 2px 0 rgba(0, 0, 0, .25);
+}
+
+.st-chip.poll { color: #c4b5fd; background: rgba(167, 139, 250, .15); }
+
+.poll {
+  margin: 14px 0 4px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2);
+}
+.poll-q { font-weight: 700; font-size: 14.5px; margin-bottom: 10px; }
+.poll-opt {
+  position: relative; display: block; width: 100%; text-align: left;
+  margin: 6px 0; padding: 9px 34px 9px 12px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface);
+  overflow: hidden; color: var(--text); font-family: inherit; font-size: 13.5px;
+  font-weight: 600; cursor: pointer; transition: border-color .12s;
+}
+.poll-opt.pick:hover { border-color: var(--accent); }
+.poll-bar {
+  position: absolute; top: 0; bottom: 0; left: 0;
+  background: rgba(74, 222, 128, .18); border-radius: 9px; transition: width .45s ease;
+}
+.poll-opt.mine .poll-bar { background: rgba(74, 222, 128, .4); }
+.poll-label { position: relative; }
+.poll-pct {
+  position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+  font-family: var(--mono); font-weight: 800; font-size: 12.5px;
+}
+.poll-foot { margin-top: 8px; font-size: 12px; color: var(--faint); }
+
+.poll-fields {
+  margin-top: 10px; padding: 12px 14px;
+  border: 1px dashed var(--border); border-radius: 10px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.poll-fields label { font-size: 12.5px; font-weight: 700; margin-top: 6px; }
+
 .hidden { display: none !important; }
 
 @keyframes fade { from { opacity: 0; } }
