@@ -17,6 +17,32 @@
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+<a class="skip-link" href="#main" data-action="skip-main">Skip to content</a>
+<svg class="icon-library" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Z"/><path d="M9 20v-7h6v7"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.7 13.1A9 9 0 0 1 10.9 3.3 9 9 0 1 0 20.7 13.1Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H3l1.8-4.5A8.5 8.5 0 1 1 21 11.5Z"/></symbol>
+  <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 16V3m-5 5 5-5 5 5M5 13v7h14v-7"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4Z"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+  <symbol id="i-megaphone" viewBox="0 0 24 24"><path d="M4 9h5l11-5v16L9 15H4Zm3 6 2 6h4l-3-6M9 9v6"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4m0 3v.1"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m12 3 2.5 6.5L21 12l-6.5 2.5L12 21l-2.5-6.5L3 12l6.5-2.5ZM20 2v4m-2-2h4"/></symbol>
+  <symbol id="i-coffee" viewBox="0 0 24 24"><path d="M4 8h12v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4ZM16 9h2a3 3 0 0 1 0 6h-2M7 2v2m5-2v2M2 23h18"/></symbol>
+  <symbol id="i-flame" viewBox="0 0 24 24"><path d="M13 2c1 7-5 6-4 11-2-1-3-3-3-3s-3 4-2 7a8 8 0 0 0 16-2c0-5-4-10-7-13Z"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-trend" viewBox="0 0 24 24"><path d="m3 17 6-6 4 4 8-10m-6 0h6v6"/></symbol>
+  <symbol id="i-trophy" viewBox="0 0 24 24"><path d="M7 3h10v7a5 5 0 0 1-10 0ZM7 5H3v3a4 4 0 0 0 4 4m10-7h4v3a4 4 0 0 1-4 4m-5 3v6m-5 0h10"/></symbol>
+  <symbol id="i-terminal" viewBox="0 0 24 24"><path d="m4 6 6 6-6 6m9 0h7"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+</svg>
 
 <div class="header">
   <header class="topbar">
@@ -28,30 +54,19 @@
 
       <div class="search">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-        <input id="search" type="search" placeholder="Search bashForum" autocomplete="off" aria-label="Search posts" />
+        <input id="search" type="search" placeholder="Search discussions, people, and ideas…" autocomplete="off" aria-label="Search posts" />
+        <kbd aria-hidden="true">/</kbd>
       </div>
 
       <div class="topbar-actions">
-        <button class="icon-btn bell-btn" data-action="bell" id="bellBtn" title="Notifications (press ? for shortcuts)" aria-label="Notifications">🔔<span class="bell-count hidden" id="bellCount" aria-hidden="true"></span></button>
+        <button class="icon-btn bell-btn" data-action="bell" id="bellBtn" title="Notifications" aria-label="Notifications"><svg class="icon" aria-hidden="true"><use href="#i-bell"/></svg><span class="bell-count hidden" id="bellCount" aria-hidden="true"></span></button>
         <button class="icon-btn cmd-btn" data-action="cmd-open" id="cmdBtn" title="Moderation console (Ctrl + `)" aria-label="Moderation console">&gt;_</button>
         <button class="icon-btn" data-action="theme" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
-        <a class="btn btn-primary btn-new" href="#/new"><span class="plus">＋</span><span class="label">New Post</span></a>
+        <a class="btn btn-primary btn-new" href="#/new" aria-label="Create a post"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg><span class="label">New post</span></a>
         <button class="user-chip" id="userChip" data-action="me" title="Your profile"></button>
       </div>
     </div>
   </header>
-
-  <nav class="topnav" aria-label="Navigation">
-    <div class="topnav-inner">
-      <div class="nav-group">
-        <a class="nav-tab" data-view="main" href="#/"><span class="nav-ico">🧵</span> Main</a>
-        <a class="nav-tab" data-view="about" href="#/about"><span class="nav-ico">ℹ️</span> About</a>
-        <a class="nav-tab" data-view="profile" href="#/profile"><span class="nav-ico">👤</span> Profile</a>
-      </div>
-      <span class="nav-sep" aria-hidden="true"></span>
-      <div class="nav-group" id="navCats"></div>
-    </div>
-  </nav>
 
   <div class="note-panel hidden" id="notePanel" aria-label="Notifications"></div>
 </div>
@@ -59,7 +74,25 @@
 <div class="site-banner hidden" id="siteBanner"></div>
 
 <div class="layout">
-  <main id="main"></main>
+  <aside class="sidebar">
+    <nav class="topnav" aria-label="Main navigation">
+      <div class="topnav-inner">
+        <div class="nav-group primary-nav">
+          <a class="nav-tab" data-view="main" href="#/"><svg class="icon" aria-hidden="true"><use href="#i-home"/></svg> Home</a>
+          <a class="nav-tab" data-view="about" href="#/about"><svg class="icon" aria-hidden="true"><use href="#i-info"/></svg> About the forum</a>
+          <a class="nav-tab" data-view="profile" href="#/profile"><svg class="icon" aria-hidden="true"><use href="#i-user"/></svg> Your profile</a>
+        </div>
+        <h2 class="nav-heading">Communities <span aria-hidden="true">/</span></h2>
+        <div class="nav-group" id="navCats"></div>
+      </div>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="sidebar-note"><span class="terminal-label">#!/bin/community</span><p>A little curiosity.<br>A lot of possibility.</p><a href="#/about">Make yourself at home <span aria-hidden="true">↗</span></a></div>
+      <button class="shortcut-link" data-action="kb-open"><span aria-hidden="true">⌨</span> Keyboard shortcuts <kbd>?</kbd></button>
+      <span class="sidebar-version">bashForum <span>v1.0</span></span>
+    </div>
+  </aside>
+  <main id="main" tabindex="-1"></main>
 </div>
 
 <footer class="site-foot">
@@ -72,10 +105,11 @@
 </footer>
 
 <!-- sign in / create account -->
-<div class="modal hidden" id="authModal">
+<div class="modal hidden" id="authModal" role="dialog" aria-modal="true" aria-labelledby="authTitle">
   <div class="modal-card auth-card">
+    <button class="icon-btn auth-close" data-action="auth-close" aria-label="Close sign in"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
     <div class="modal-logo">&gt;_</div>
-    <h2>Welcome to bashForum</h2>
+    <h2 id="authTitle">Welcome to bashForum</h2>
     <p>Sign in to post, vote and build your profile.</p>
 
     <div class="auth-tabs">
@@ -102,6 +136,7 @@
     </form>
 
     <div class="auth-err" id="authErr" role="alert"></div>
+    <button class="browse-link" data-action="auth-close">Just browsing? Explore the community <span aria-hidden="true">→</span></button>
   </div>
 </div>
 

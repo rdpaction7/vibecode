@@ -6,7 +6,7 @@ A community forum for shell tinkerers, script addicts and prompt customizers.
 
 Any static file server works:
 
-```bash/
+```bash
 python3 -m http.server 8080
 # then open http://127.0.0.1:8080
 ```
@@ -16,21 +16,23 @@ Opening `index.html` directly via `file://` also works in most browsers.
 ## Features
 
 - Reddit-style feed with upvotes / downvotes, post scores and karma
-- Top navigation: **Main** (feed), **About** (info, rules, credits) and **Profile**
+- Desktop sidebar and scrollable mobile navigation: **Home**, **About the forum**, **Your profile**, and communities
+- Terminal-inspired welcome panel, community stats, and clickable topic discovery
+- Public browsing of discussions and member profiles; sign in when you're ready to participate
 - Profile pages with picture, description, karma, upvote rating, posts and comments
 - Threads with nested comments, tags and per-community flairs
 - Communities: Announcements, General, Help & Support, Show & Tell, Off-Topic
 - Sorting: Hot, New, Top, Rising
-- Live search across titles, bodies, authors and comments
+- Live search across titles, bodies, authors, tags and comments; press `/` to search
 - Email + password sign-in with local accounts (salted, iterated password hashes); your own posts and comments can be deleted
-- Dark / light theme, mobile-friendly drawer navigation
+- Refined dark / light themes, responsive layouts, reduced-motion support, and keyboard-friendly sign-in
 - Hash-based routing (`#/`, `#/about`, `#/profile`, `#/t/<id>`, `#/new`, `#/user/<id>`)
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | Shell: topbar, top nav, auth modal, toast |
+| `index.html` | Shell: topbar, sidebar, SVG icons, auth modal, toast |
 | `styles.css` | Design system (CSS variables for both themes) |
 | `app.js` | Storage layer, router, views and event handling |
 

@@ -23,13 +23,17 @@
   ];
 
   const SORTS = [
-    { id: 'hot',    label: 'Hot',    icon: '🔥' },
-    { id: 'new',    label: 'New',    icon: '🕒' },
-    { id: 'top',    label: 'Top',    icon: '🏆' },
-    { id: 'rising', label: 'Rising', icon: '📈' },
+    { id: 'hot',    label: 'Hot',    icon: 'flame' },
+    { id: 'new',    label: 'New',    icon: 'clock' },
+    { id: 'top',    label: 'Top',    icon: 'trophy' },
+    { id: 'rising', label: 'Rising', icon: 'trend' },
   ];
 
   /* ---------------- helpers ---------------- */
+
+  const icon = (name) => `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+  const categoryIcon = (id) => icon(({ announcements: 'megaphone', general: 'chat', help: 'help', showcase: 'sparkles', offtopic: 'coffee' })[id] || 'grid');
+  const visibleThreads = () => db.threads.filter((t) => !t.deleted && (!t.hidden || isStaff()) && canRead(t.cat));
 
   const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 9);
   const $ = (s, r = document) => r.querySelector(s);
@@ -441,6 +445,7 @@
   };
 
   const canWrite = (catId) => {
+    if (!me()) return false;
     if (isAdmin()) return true;
     const st = db.catState[catId] || {};
     return ((st.perms && st.perms[myGroup()]) || 'write') === 'write';
@@ -604,8 +609,12 @@
         `<span class="name">${esc(u.name)}</span>` +
         (u.role ? `<span class="badge role ${esc(u.role)}" title="${u.role === 'admin' ? 'Administrator' : 'Moderator'}">${esc(u.role)}</span>` : '') +
         `<span class="karma" title="karma">${fmtNum(karma(u.id))}</span>`
-      : `<span class="name">Sign in</span>`;
-    $('#themeBtn').textContent = document.documentElement.dataset.theme === 'light' ? '🌙' : '☀️';
+      : `${icon('user')}<span class="name">Sign in</span>`;
+    $('#userChip').setAttribute('aria-label', u ? 'Your profile' : 'Sign in');
+    $('#userChip').title = u ? 'Your profile' : 'Sign in';
+    const isLight = document.documentElement.dataset.theme === 'light';
+    $('#themeBtn').innerHTML = icon(isLight ? 'moon' : 'sun');
+    $('#themeBtn').setAttribute('aria-label', `Switch to ${isLight ? 'dark' : 'light'} theme`);
 
     const unread = db.notes.filter((n) => n.to === db.currentUserId && !n.read).length;
     const bellCount = $('#bellCount');
@@ -634,15 +643,16 @@
     const catId = q.get('cat');
     const counts = {};
     allCats().forEach((c) => (counts[c.id] = 0));
-    db.threads.forEach((t) => { if (counts[t.cat] != null) counts[t.cat]++; });
+    const posts = visibleThreads();
+    posts.forEach((t) => { if (counts[t.cat] != null) counts[t.cat]++; });
     const onFeed = path === '/' || path === '';
 
     $('#navCats').innerHTML = `
-      <a class="nav-cat ${onFeed && !catId ? 'active' : ''}" href="#/" title="All posts">
-        🌐 All <span class="nav-count">${db.threads.length}</span></a>
-      ${allCats().map((c) => `
-        <a class="nav-cat ${onFeed && catId === c.id ? 'active' : ''}" href="#/?cat=${c.id}"
-           title="${esc(c.name)}">${c.icon} ${c.name} <span class="nav-count">${counts[c.id]}</span></a>`).join('')}`;
+      <a class="nav-cat ${onFeed && !catId ? 'active' : ''}" href="#/" ${onFeed && !catId ? 'aria-current="page"' : ''}>
+        ${icon('grid')} <span>All discussions</span><span class="nav-count">${posts.length}</span></a>
+      ${allCats().filter((c) => canRead(c.id)).map((c) => `
+        <a class="nav-cat ${onFeed && catId === c.id ? 'active' : ''}" href="#/?cat=${encodeURIComponent(c.id)}"
+           ${onFeed && catId === c.id ? 'aria-current="page"' : ''} title="${esc(c.desc)}">${categoryIcon(c.id)} <span>${esc(c.name)}</span><span class="nav-count">${counts[c.id]}</span></a>`).join('')}`;
   }
 
   function renderAbout() {
@@ -748,22 +758,23 @@
         ${voteColumn(t, 'thread')}
         <div class="post-main">
           <div class="post-meta">
-            <a class="comm-pill" href="#/?cat=${t.cat}" data-action="open" data-href="#/?cat=${t.cat}">~/${t.cat}</a>
+            ${avatar(a, 22)}
+            <a class="comm-pill" href="#/?cat=${t.cat}" data-action="open" data-href="#/?cat=${t.cat}">${esc(community(t.cat).name)}</a>
             <span class="dot">•</span>
             <a class="author" href="#/user/${t.author}" data-action="open" data-href="#/user/${t.author}">${esc(a.name)}</a>${badges(a)}
             <span class="dot">•</span>
             <span>${fmtTime(t.created)}</span>
-            ${t.tags.map(tagChip).join('')}
             ${stChips(t)}
           </div>
           <h2 class="post-title"><a href="#/t/${t.id}">${esc(t.title)}</a></h2>
           <p class="excerpt">${esc(excerpt)}${t.body.length > 240 ? '…' : ''}</p>
+          ${t.tags.length ? `<div class="feed-tags">${t.tags.map(tagChip).join('')}</div>` : ''}
           <div class="post-foot">
             <a class="foot-item" href="#/t/${t.id}" data-action="open" data-href="#/t/${t.id}">
-              💬 ${t.replies.length} ${t.replies.length === 1 ? 'Comment' : 'Comments'}
+              ${icon('chat')} ${t.replies.length} ${t.replies.length === 1 ? 'comment' : 'comments'}
             </a>
-            <button class="foot-item" data-action="share">⤴ Share</button>
-            ${db.currentUserId ? `<button class="foot-item${isSaved(t.id) ? ' saved' : ''}" data-action="save" data-id="${t.id}">${isSaved(t.id) ? '🔖 Saved' : '🔖 Save'}</button>` : ''}
+            <button class="foot-item" data-action="share" data-id="${t.id}">${icon('share')} Share</button>
+            <button class="foot-item save-post${isSaved(t.id) ? ' saved' : ''}" data-action="save" data-id="${t.id}" aria-label="${isSaved(t.id) ? 'Unsave' : 'Save'} post">${icon('bookmark')}<span>${isSaved(t.id) ? 'Saved' : 'Save'}</span></button>
             ${canFlag ? `<button class="foot-item" data-action="report" data-kind="thread" data-id="${t.id}">⚑ Report</button>` : ''}
             ${mine ? `<button class="foot-item danger" data-action="del-thread" data-id="${t.id}">Delete</button>` : ''}
           </div>
@@ -807,6 +818,7 @@
       list = list.filter((t) =>
         t.title.toLowerCase().includes(q) ||
         t.body.toLowerCase().includes(q) ||
+        t.tags.some((tag) => tag.toLowerCase().includes(q.replace(/^#/, ''))) ||
         user(t.author).name.toLowerCase().includes(q) ||
         t.replies.some((r) => r.body.toLowerCase().includes(q) || user(r.author).name.toLowerCase().includes(q)));
     }
@@ -829,45 +841,71 @@
     const tabs = SORTS.map((s) => {
       const p = new URLSearchParams(params);
       p.set('sort', s.id);
-      return `<a class="tab ${sort === s.id ? 'active' : ''}" href="${homeHash(p)}">
-                <span>${s.icon}</span>${s.label}
+      return `<a class="tab ${sort === s.id ? 'active' : ''}" href="${homeHash(p)}" ${sort === s.id ? 'aria-current="true"' : ''}>
+                ${icon(s.icon)}${s.label}
               </a>`;
     }).join('');
 
-    const promptCmd = q
-      ? `grep "${esc(params.get('q'))}" ./posts`
-      : c ? `cd ~/${c.id}` : 'welcome to bashForum';
+    const posts = visibleThreads();
     const members = Object.keys(db.users).length;
-    const totalComments = db.threads.reduce((n, x) => n + x.replies.length, 0);
+    const totalComments = posts.reduce((n, x) => n + x.replies.length, 0);
+    const topicCounts = new Map();
+    posts.forEach((t) => t.tags.forEach((tag) => topicCounts.set(tag, (topicCounts.get(tag) || 0) + 1)));
+    const topics = [...topicCounts].sort((a, b) => b[1] - a[1]).slice(0, 6);
 
     $('#main').innerHTML = `
-      <section class="feed-hero">
+      <div class="page-eyebrow"><span>THE COMMUNITY</span><span class="eyebrow-path">~/ ${c ? esc(c.id) : 'home'}</span></div>
+      <section class="feed-hero${q || c ? ' contextual-hero' : ''}">
         <div class="hero-body">
-          <h1 class="hero-line"><span class="hero-prompt">❯</span>${promptCmd}<span class="caret">▍</span></h1>
-          <p class="hero-sub">${c
-            ? esc(c.desc)
-            : 'A community for shell tinkerers, script addicts and prompt customizers — share configs, trade aliases, debug together.'}</p>
-          <div class="hero-meta">
-            <span>👥 ${fmtNum(members)} members</span>
-            <span>📝 ${fmtNum(db.threads.length)} posts</span>
-            <span>💬 ${fmtNum(totalComments)} comments</span>
-            <a class="btn btn-primary btn-sm hero-cta" href="#/new">＋ New Post</a>
+          <div class="hero-kicker"><span class="status-dot"></span> A home for the terminally curious</div>
+          <h1>${q ? `Find your next <span>aha moment.</span>` : c ? esc(c.name) : 'Your people.<br>Your <span>command line.</span>'}</h1>
+          <p class="hero-sub">${q ? `Searching discussions for “${esc(params.get('q'))}”` : c ? esc(c.desc) : 'Share a script. Find an answer. Make your terminal feel a little more like home.'}</p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="#/new">Start a discussion ${icon('arrow')}</a>
+            <a class="hero-about" href="#/about">Meet the community <span aria-hidden="true">↗</span></a>
           </div>
+        </div>
+        <div class="hero-terminal" aria-hidden="true">
+          <div class="terminal-top"><span class="terminal-dots"><i></i><i></i><i></i></span><span>you@bashforum: ~</span>${icon('terminal')}</div>
+          <div class="terminal-content">
+            <div><span class="terminal-green">❯</span> whoami</div>
+            <div class="terminal-output">a tinkerer. a builder. one of us.</div>
+            <div class="terminal-command"><span class="terminal-green">❯</span> cat community.sh</div>
+            <div><span class="terminal-purple">while</span> curious; <span class="terminal-purple">do</span></div>
+            <div class="terminal-indent">learn <span class="terminal-dim">&amp;&amp;</span> share <span class="terminal-dim">&amp;&amp;</span> grow</div>
+            <div><span class="terminal-purple">done</span></div>
+            <div class="terminal-command"><span class="terminal-green">❯</span> <span class="caret">▍</span></div>
+          </div>
+          <div class="terminal-bottom"><span class="status-dot"></span> endless possibilities. zero dependencies.</div>
         </div>
       </section>
 
-      ${db.plugins.leaderboard ? leaderboardStrip() : ''}
-
-      <div class="tabs">${tabs}</div>
-
-      ${list.length
-        ? `<div class="feed">${list.map(postRow).join('')}</div>`
-        : `<div class="empty">
-             <div class="big">🔍</div>
-             <h3>${q ? 'No results found' : sort === 'rising' ? 'Nothing is rising right now' : 'No posts yet'}</h3>
-             <p>${q ? 'Try a different search term.' : 'Be the first to post in this community.'}</p>
-             <a class="btn btn-primary" href="#/new">Create a post</a>
-           </div>`}`;
+      <div class="home-columns">
+        <section class="discussions" aria-label="Discussions">
+          <div class="feed-heading"><h2>${q ? 'Search results' : c ? esc(c.name) : 'All discussions'}</h2><span>${list.length} ${list.length === 1 ? 'discussion' : 'discussions'}</span></div>
+          <div class="feed-toolbar"><nav class="tabs" aria-label="Sort discussions">${tabs}</nav><span class="feed-view" title="Discussion view" aria-hidden="true">${icon('grid')}</span></div>
+          ${list.length
+            ? `<div class="feed">${list.map(postRow).join('')}</div>`
+            : `<div class="empty">
+                <div class="empty-icon">${icon('search')}</div>
+                <h3>${q ? 'No matches this time' : sort === 'rising' ? 'A quiet moment' : 'Start something good'}</h3>
+                <p>${q ? 'Try another keyword, or explore all discussions.' : 'Your next question could start a great conversation.'}</p>
+                <a class="btn btn-primary" href="${q ? '#/' : '#/new'}">${q ? 'Explore discussions' : 'Create a post'}</a>
+              </div>`}
+          <div class="feed-end"><span>&gt;_</span> ${list.length ? "You're all caught up. Go make something." : 'Every great idea starts with a question.'}</div>
+        </section>
+        <aside class="community-rail" aria-label="Community information">
+          <section class="card community-card">
+            <div class="rail-heading"><span class="rail-mark">&gt;_</span><h2>A small corner.<br>Big shell energy.</h2></div>
+            <p>For shell tinkerers, script lovers, and anyone who's ever spent too long on their prompt.</p>
+            <div class="community-stats"><div><b>${fmtNum(members)}</b><span>members</span></div><div><b>${fmtNum(posts.length)}</b><span>discussions</span></div><div><b>${fmtNum(totalComments)}</b><span>replies</span></div></div>
+            <a class="rail-link" href="#/about">Get to know bashForum ${icon('arrow')}</a>
+          </section>
+          ${db.plugins.leaderboard ? leaderboardStrip() : ''}
+          ${topics.length ? `<section class="card topics-card"><h2>${icon('trend')} Around the terminal</h2><p>Find your next rabbit hole.</p><div class="topic-list">${topics.map(([tag, count]) => `<a href="#/?q=${encodeURIComponent('#' + tag)}"><span>#${esc(tag)}</span><span>${count} ${count === 1 ? 'post' : 'posts'} ${icon('arrow')}</span></a>`).join('')}</div></section>` : ''}
+          <section class="rail-guidelines"><h2>${icon('sparkles')} Good people. Good conversations.</h2><p>Be curious. Be kind. Share what you know.<br>Every expert was a beginner once.</p><a href="#/about">Our community guidelines <span aria-hidden="true">↗</span></a></section>
+        </aside>
+      </div>`;
   }
 
   /* ---------------- poll rendering ---------------- */
@@ -901,7 +939,7 @@
 
   function renderThread(id) {
     const t = thread(id);
-    if (!t || ((t.deleted || t.hidden) && !isStaff())) {
+    if (!t || !canRead(t.cat) || ((t.deleted || t.hidden) && !isStaff())) {
       $('#main').innerHTML = `
         <div class="empty"><div class="big">🕳️</div><h3>Post not found</h3>
         <p>It may have been removed.</p>
@@ -1033,6 +1071,7 @@
           </form>` : `
           <div class="card lock-note">${t.locked
             ? '🔒 This conversation is locked — no new comments.'
+            : !me() ? 'Join the conversation. <button class="link-btn" data-action="auth-open">Sign in to leave a reply →</button>'
             : "You don't have permission to comment in this board."}</div>`}
 
           <div class="comments-head">
@@ -1141,9 +1180,10 @@
     }
 
     const mine = u.id === db.currentUserId;
-    const started = db.threads.filter((t) => t.author === u.id).sort((a, b) => b.created - a.created);
+    const readable = visibleThreads();
+    const started = readable.filter((t) => t.author === u.id).sort((a, b) => b.created - a.created);
     const saved = mine
-      ? (u.saves || []).map((id) => db.threads.find((t) => t.id === id)).filter(Boolean)
+      ? (u.saves || []).map((id) => readable.find((t) => t.id === id)).filter(Boolean)
       : [];
     const s = stats(u.id);
     const joined = new Date(u.joined).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
@@ -1265,6 +1305,7 @@
   }
 
   function render() {
+    clearTimeout(searchTimer);
     const { path, q } = parse();
     renderHeader();
     renderNavCats(q, path);
@@ -1280,20 +1321,18 @@
       /* offline for everyone but admins */
       special = true;
       renderMaintenance();
-      authModal.classList.add('hidden');
-    } else if (!u) {
-      /* signed out — read-only feed behind the sign-in screen */
+      closeAuth();
+    } else if (!u && (path === '/new' || path === '/profile')) {
+      /* Reading is open; creating and personal profiles require an account. */
       renderHome(q);
-      const wasHidden = authModal.classList.contains('hidden');
-      authModal.classList.remove('hidden');
-      if (wasHidden) setTimeout(() => { const el = $('#loginForm input'); if (el) el.focus(); }, 60);
+      openAuth();
     } else if (held) {
       /* banned or suspended account */
       special = true;
-      authModal.classList.add('hidden');
+      closeAuth();
       renderBlocked(u, statusOf(u));
     } else {
-      if (!authModal.classList.contains('hidden')) authModal.classList.add('hidden');
+      if (!authModal.classList.contains('hidden')) closeAuth();
 
       if (path === '/' || path === '') renderHome(q);
       else if (path === '/about') renderAbout();
@@ -1305,7 +1344,7 @@
         <p>That URL does not exist here.</p><a class="btn btn-primary" href="#/">Back to the feed</a></div>`;
     }
 
-    const view = special || !u ? 'main'
+    const view = special ? 'main'
       : path === '/about' ? 'about'
       : (path === '/profile' || path.startsWith('/user/')) ? 'profile'
       : 'main';
@@ -1313,8 +1352,10 @@
     const onFeed = path === '/' || path === '';
     document.querySelectorAll('.nav-tab').forEach((a) => {
       const isMain = a.dataset.view === 'main';
-      a.classList.toggle('active', a.dataset.view === view &&
-        !(isMain && onFeed && catSel));
+      const active = a.dataset.view === view && !(isMain && onFeed && catSel);
+      a.classList.toggle('active', active);
+      if (active) a.setAttribute('aria-current', 'page');
+      else a.removeAttribute('aria-current');
     });
 
     const search = $('#search');
@@ -1326,6 +1367,43 @@
 
   /* ---------------- actions ---------------- */
 
+  let authOpener = null;
+  function openAuth() {
+    const modal = $('#authModal');
+    if (!modal.classList.contains('hidden')) return;
+    authOpener = document.activeElement;
+    modal.classList.remove('hidden');
+    document.body.classList.add('auth-open');
+    document.querySelectorAll('.header, .layout, .site-foot, .site-banner').forEach((el) => { el.inert = true; });
+    const input = modal.querySelector('.auth-form:not(.hidden) input');
+    if (input) input.focus();
+  }
+
+  function closeAuth() {
+    const modal = $('#authModal');
+    if (modal.classList.contains('hidden')) return;
+    modal.classList.add('hidden');
+    document.body.classList.remove('auth-open');
+    document.querySelectorAll('[inert]').forEach((el) => { el.inert = false; });
+    if (authOpener && authOpener.isConnected) authOpener.focus();
+    else $('#main').focus();
+  }
+
+  $('#authModal').addEventListener('click', (e) => {
+    if (e.target === e.currentTarget) $('[data-action="auth-close"]').click();
+  });
+  $('#authModal').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      $('[data-action="auth-close"]').click();
+    }
+    if (e.key !== 'Tab') return;
+    const controls = [...e.currentTarget.querySelectorAll('button, input')].filter((el) => el.getClientRects().length);
+    const first = controls[0], last = controls[controls.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
+
   let toastTimer;
   function toast(msg) {
     const el = $('#toast');
@@ -1336,6 +1414,7 @@
   }
 
   function applyVote(kind, id, tid, dir) {
+    if (!me()) { openAuth(); return; }
     const item = kind === 'thread'
       ? thread(id)
       : ((thread(tid) || {}).replies || []).find((r) => r.id === id);
@@ -1373,6 +1452,19 @@
     const el = e.target.closest('[data-action]');
     if (!el) return;
     const action = el.dataset.action;
+
+    if (action === 'skip-main') { e.preventDefault(); $('#main').focus(); return; }
+    if (action === 'auth-open') { openAuth(); return; }
+    if (action === 'auth-close') {
+      closeAuth();
+      const { path } = parse();
+      if (!me() && (path === '/new' || path === '/profile')) location.hash = '#/';
+      return;
+    }
+    if (action === 'kb-open') { openKb(); return; }
+    if (!me() && ['save', 'poll-vote', 'report', 'reply-to', 'del-thread', 'del-reply', 'pfp-remove', 'reset'].includes(action)) {
+      openAuth(); return;
+    }
 
     if (action === 'auth-tab') {
       const which = el.dataset.which || 'login';
@@ -1518,7 +1610,7 @@
       renderHeader();
     }
 
-    if (action === 'me') location.hash = '#/profile';
+    if (action === 'me') { if (me()) location.hash = '#/profile'; else openAuth(); }
 
     if (action === 'open') {
       const anchor = e.target.closest('a');
@@ -1531,7 +1623,7 @@
     }
 
     if (action === 'share') {
-      const url = location.href;
+      const url = el.dataset.id ? new URL('#/t/' + el.dataset.id, location.href).href : location.href;
       if (navigator.clipboard) {
         navigator.clipboard.writeText(url)
           .then(() => toast('Link copied'), () => toast('Could not copy link'));
@@ -1640,6 +1732,10 @@
       render();
       toast('Welcome to bashForum, ' + name + '!');
       return;
+    }
+
+    if (['editProfileForm', 'newThreadForm', 'replyForm'].includes(form.id) && !me()) {
+      e.preventDefault(); openAuth(); return;
     }
 
     if (form.id === 'editProfileForm') {
@@ -1807,8 +1903,7 @@
       render();
       const input = $('#search');
       input.focus();
-      const end = input.value.length;
-      input.setSelectionRange(end, end);
+      // Search inputs do not support setSelectionRange; the focused value is unchanged.
     }, 140);
   });
 
@@ -1819,7 +1914,17 @@
       location.hash = homeHash(new URLSearchParams(v ? 'q=' + encodeURIComponent(v) : ''));
       e.target.blur();
     }
-    if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); }
+    if (e.key === 'Escape') {
+      clearTimeout(searchTimer);
+      e.target.value = '';
+      e.target.blur();
+      const { path, q } = parse();
+      if (path === '/' || path === '') {
+        q.delete('q');
+        history.replaceState(null, '', homeHash(q));
+        render();
+      }
+    }
   });
 
   /* ---------------- moderation console ---------------- */
@@ -2576,7 +2681,7 @@
     if (sub === 'enable' && name) {
       db.plugins[name] = true;
       c.out('🧩 Plugin “' + name + '” enabled.');
-      if (name === 'leaderboard') c.info('   Top-members strip now shows above the feed.');
+      if (name === 'leaderboard') c.info('   Top members now show in the community sidebar.');
     } else if (sub === 'disable' && name) {
       delete db.plugins[name];
       c.out('🧩 Plugin “' + name + '” disabled.');
@@ -2641,6 +2746,7 @@
     el.tagName === 'SELECT' || el.isContentEditable);
 
   document.addEventListener('keydown', (e) => {
+    if (!$('#authModal').classList.contains('hidden')) return;
     const openModal = ['#cmdModal', '#kbModal'].some((s) => {
       const m = $(s);
       return m && !m.classList.contains('hidden');
