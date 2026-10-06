@@ -561,7 +561,9 @@
       d: DAY, day: DAY, days: DAY, w: 7 * DAY, week: 7 * DAY, weeks: 7 * DAY,
     };
     const mult = units[m[2] || 'd'];
-    return mult ? Math.round(parseFloat(m[1]) * mult) : 0;
+    const duration = mult ? Math.round(parseFloat(m[1]) * mult) : 0;
+    return Number.isSafeInteger(duration) && duration > 0 &&
+      Number.isFinite(new Date(Date.now() + duration).getTime()) ? duration : 0;
   };
 
   /* staff actions are recorded for /viewlogs */
@@ -1975,7 +1977,7 @@
         if (ch === q) q = '';
         else cur += ch;
       } else if (ch === '"' || ch === "'") q = ch;
-      else if (ch === ' ') { if (cur) { out.push(cur); cur = ''; } }
+      else if (/\s/.test(ch)) { if (cur) { out.push(cur); cur = ''; } }
       else cur += ch;
     }
     if (cur) out.push(cur);
@@ -2088,6 +2090,48 @@
     return out;
   };
 
+  /* Keep large result sets readable without overflowing the console log. */
+  const cmdList = (c, title, rows) => {
+    c.info(title + ' (' + rows.length + '):');
+    if (!rows.length) { c.info('  No matches.'); return; }
+    rows.slice(0, 50).forEach((row) => c.info('  ' + row));
+    if (rows.length > 50) c.info('  … ' + (rows.length - 50) + ' more; showing the first 50.');
+  };
+
+  const itemFlags = (it) => ['deleted', 'hidden', 'locked', 'pinned', 'featured']
+    .filter((key) => it[key]).map((key) => '[' + key + ']').join(' ');
+  const itemLine = (it) => it.id + ' · ' + user(it.author).name + ' · ' +
+    plain(it.title || it.body).slice(0, 90) + (itemFlags(it) ? ' ' + itemFlags(it) : '');
+  const newestFirst = (items) => items.slice().sort((a, b) => b.created - a.created);
+  const userLine = (u) => u.id + ' · ' + u.name + ' · ' + (u.role || 'member') +
+    (statusOf(u) ? ' [' + statusOf(u).kind + ']' : '') + (u.muffled ? ' [muffled]' : '');
+  const itemFrom = (it) => it.kind === 'thread' ? it.t : it.r;
+  const commandMatches = (name, spec, query) =>
+    [name, spec.group, spec.usage, spec.desc].join(' ').toLowerCase().includes(query);
+
+  function commandText(c, words, max) {
+    const text = words.join(' ').trim();
+    if (!text || text.length > max) {
+      c.err('Usage: ' + c.usage + ' — text must be 1–' + max + ' characters.');
+      return null;
+    }
+    return text;
+  }
+
+  function commandTags(c, text) {
+    const tags = [];
+    for (const part of text.split(',')) {
+      const tag = part.trim().replace(/^#/, '').trim();
+      if (!tag || tag.length > 20) {
+        c.err('Tags must be 1–20 characters each, separated by commas.');
+        return null;
+      }
+      if (!tags.some((x) => x.toLowerCase() === tag.toLowerCase())) tags.push(tag);
+    }
+    if (tags.length > 4) { c.err('A thread can have at most 4 tags.'); return null; }
+    return tags;
+  }
+
   /* ---- the commands ---- */
 
   const COMMANDS = {};
@@ -2095,9 +2139,12 @@
 
   /* Console */
   const helpRun = (c) => {
-    c.out('bashForum moderation commands', 'info');
+    const query = c.a.join(' ').toLowerCase().replace(/^\//, '');
+    const matches = Object.entries(COMMANDS).filter(([name, s]) => commandMatches(name, s, query));
+    c.out('bashForum moderation commands — ' + matches.length + ' of ' + Object.keys(COMMANDS).length, 'info');
+    if (!matches.length) { c.info('No matching commands. Try /help without a filter.'); return; }
     ['Console', 'Users', 'Threads', 'Boards', 'Queue', 'System'].forEach((g) => {
-      const rows = Object.entries(COMMANDS).filter(([, s]) => s.group === g);
+      const rows = matches.filter(([, s]) => s.group === g);
       if (!rows.length) return;
       c.info('');
       c.info('  ' + g);
@@ -2105,14 +2152,54 @@
     });
     c.info('');
     c.info('  Every command needs an admin sign-in.');
+    c.info('  Use /help <group or keyword> to filter; quote names with spaces.');
   };
-  def('help', 'Console', '/help', 'List every command with usage', helpRun);
-  def('commands', 'Console', '/commands', 'Same as /help', helpRun);
+  def('help', 'Console', '/help [group or keyword]', 'List commands with usage, optionally filtered', helpRun);
+  def('commands', 'Console', '/commands [group or keyword]', 'Same as /help', helpRun);
   def('version', 'Console', '/version', 'Show the running software version', (c) => {
     c.out('bashForum v1.0.0 · schema v' + (db.version || 1), 'info');
     c.info('   boards ' + allCats().length + ' · users ' + Object.keys(db.users).length +
       ' · accounts ' + Object.keys(db.accounts).length +
       ' · plugins ' + Object.keys(db.plugins).length);
+  });
+
+  def('clear', 'Console', '/clear', 'Clear console output without deleting the audit log', (c) => {
+    const log = $('#cmdLog');
+    if (log) log.textContent = '';
+    c.out('Console cleared. Audit entries and command history are unchanged.');
+  });
+
+  def('history', 'Console', '/history', 'Show commands entered in this console session', (c) => {
+    cmdList(c, 'Session history (newest first)', cmdState.hist.slice().reverse());
+  });
+
+  def('whoami', 'Console', '/whoami', 'Show the signed-in profile and role', (c) => {
+    c.info(userLine(me()));
+  });
+
+  def('findcommand', 'Console', '/findcommand <query>', 'Find commands by name, group, or description', (c) => {
+    const query = c.a.join(' ').trim().toLowerCase().replace(/^\//, '');
+    if (!query) { usageErr(c); return; }
+    cmdList(c, 'Matching commands', Object.entries(COMMANDS)
+      .filter(([name, spec]) => commandMatches(name, spec, query))
+      .map(([, spec]) => spec.usage + ' — ' + spec.desc));
+  });
+
+  def('go', 'Console', '/go <thread_id>', 'Open a thread and close the console', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    if (t.deleted) { c.err('This thread is deleted. Use /restore ' + t.id + ' first.'); return; }
+    location.hash = '#/t/' + t.id;
+    c.out('Opening ' + t.id + '.');
+    closeCmd();
+  });
+
+  def('search', 'Console', '/search <query>', 'Search the discussion feed and close the console', (c) => {
+    const query = c.a.join(' ').trim();
+    if (!query) { usageErr(c); return; }
+    location.hash = homeHash(new URLSearchParams({ q: query }));
+    c.out('Searching the feed for “' + query + '”.');
+    closeCmd();
   });
 
   /* Users */
@@ -2296,6 +2383,118 @@
       ' · profile created ' + new Date(u.joined).toLocaleDateString());
   });
 
+  def('users', 'Users', '/users [query]', 'List user IDs, names, roles, and account holds', (c) => {
+    const query = c.a.join(' ').toLowerCase();
+    const rows = Object.values(db.users).filter((u) =>
+      (u.id + ' ' + u.name).toLowerCase().includes(query));
+    cmdList(c, 'Users', rows.map(userLine));
+  });
+
+  def('userinfo', 'Users', '/userinfo <user>', 'Inspect a profile, restrictions, and contribution totals', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    const s = stats(u.id);
+    c.info(userLine(u));
+    c.info('Joined: ' + new Date(u.joined).toLocaleString() + ' · verified: ' + u.verified);
+    c.info('Rank: ' + (u.rank || 'none') + ' · bio: ' + (u.bio || 'none'));
+    c.info('Posts: ' + s.posts + ' · comments: ' + s.comments + ' · karma: ' + s.karma);
+    c.info('Warnings: ' + u.warnings.length + ' · saved threads: ' + u.saves.length);
+    const held = statusOf(u);
+    if (held) c.info(held.msg);
+  });
+
+  def('staff', 'Users', '/staff', 'List all administrators and moderators', (c) => {
+    cmdList(c, 'Staff', Object.values(db.users)
+      .filter((u) => u.role === 'admin' || u.role === 'mod').map(userLine));
+  });
+
+  def('bannedusers', 'Users', '/bannedusers', 'List active bans, temporary bans, and suspensions', (c) => {
+    cmdList(c, 'Restricted accounts', Object.values(db.users).filter((u) => statusOf(u)).map(userLine));
+  });
+
+  def('mutedusers', 'Users', '/mutedusers', 'List accounts whose posting rights are muffled', (c) => {
+    cmdList(c, 'Muffled accounts', Object.values(db.users).filter((u) => u.muffled).map(userLine));
+  });
+
+  def('unmuffle', 'Users', '/unmuffle <user>', 'Restore posting rights without toggling the mute', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    u.muffled = false;
+    c.out(u.name + ' is no longer muffled. Other account holds are unchanged.');
+  });
+
+  def('unverify', 'Users', '/unverify <user>', 'Remove a profile’s verified badge', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    u.verified = false;
+    c.out('Verified badge removed from ' + u.name + '.');
+  });
+
+  def('clearrank', 'Users', '/clearrank <user>', 'Remove a custom profile title', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    u.rank = '';
+    c.out('Custom rank cleared for ' + u.name + '.');
+  });
+
+  def('renameuser', 'Users', '/renameuser <user> <name>', 'Change a display name (2–32 characters, unique)', (c) => {
+    const found = takeUser(c);
+    if (!found) return;
+    const name = commandText(c, found.tail, 32);
+    if (name == null) return;
+    if (name.length < 2) { c.err('Names must be at least 2 characters.'); return; }
+    if (Object.values(db.users).some((u) => u.id !== found.u.id && u.name.toLowerCase() === name.toLowerCase())) {
+      c.err('Another user already has that display name.'); return;
+    }
+    const old = found.u.name;
+    found.u.name = name;
+    c.out('Renamed ' + old + ' → ' + name + '. Sign-in credentials are unchanged.');
+  });
+
+  def('setbio', 'Users', '/setbio <user> <text>', 'Replace a profile bio (up to 180 characters)', (c) => {
+    const found = takeUser(c);
+    if (!found) return;
+    const text = commandText(c, found.tail, 180);
+    if (text == null) return;
+    found.u.bio = text;
+    c.out('Bio updated for ' + found.u.name + '.');
+  });
+
+  def('clearavatar', 'Users', '/clearavatar <user>', 'Remove a profile picture or emoji avatar', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    u.pfp = '';
+    c.out('Avatar removed for ' + u.name + '.');
+  });
+
+  def('userposts', 'Users', '/userposts <user>', 'List a user’s threads, including hidden/deleted ones', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    cmdList(c, 'Threads by ' + u.name, newestFirst(db.threads.filter((t) => t.author === u.id)).map(itemLine));
+  });
+
+  def('usercomments', 'Users', '/usercomments <user>', 'List a user’s comments with their thread IDs', (c) => {
+    const u = needUser(c);
+    if (!u) return;
+    const rows = [];
+    db.threads.forEach((t) => t.replies.forEach((r) => {
+      if (r.author === u.id) rows.push({ r, tid: t.id });
+    }));
+    rows.sort((a, b) => b.r.created - a.r.created);
+    cmdList(c, 'Comments by ' + u.name, rows.map(({ r, tid }) => itemLine(r) + ' · thread ' + tid));
+  });
+
+  def('unwarn', 'Users', '/unwarn <user> <number>', 'Remove one warning by its /warnhistory number', (c) => {
+    const found = takeUser(c);
+    if (!found) return;
+    const index = Number(found.tail[0]);
+    if (found.tail.length !== 1 || !Number.isInteger(index) || index < 1 || index > found.u.warnings.length) {
+      c.err('Usage: ' + c.usage + ' — choose a current /warnhistory number.'); return;
+    }
+    const removed = found.u.warnings.splice(index - 1, 1)[0];
+    c.out('Warning removed for ' + found.u.name + ': ' + removed.reason);
+  });
+
   /* Threads */
   def('lock', 'Threads', '/lock <thread_id>', 'Halt all new replies on a thread', (c) => {
     const t = needThread(c);
@@ -2446,6 +2645,125 @@
       (it.kind === 'thread' ? it.t.id : it.r.id) + '.');
   });
 
+  def('threads', 'Threads', '/threads [board]', 'List thread IDs, newest first, optionally by board', (c) => {
+    const cat = c.a.length ? needCat(c) : null;
+    if (c.a.length && !cat) return;
+    const rows = db.threads.filter((t) => !cat || t.cat === cat.id);
+    cmdList(c, 'Threads (including hidden/deleted)', newestFirst(rows).map((t) => itemLine(t) + ' · ~/' + t.cat));
+  });
+
+  def('threadinfo', 'Threads', '/threadinfo <thread_id>', 'Inspect a thread’s metadata and moderation state', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    c.info(itemLine(t));
+    c.info('Board: ~/' + t.cat + ' · created: ' + new Date(t.created).toLocaleString());
+    c.info('Comments: ' + t.replies.length + ' · score: ' + score(t) + ' · reports: ' + (t.reports || []).length);
+    c.info('Tags: ' + ((t.tags || []).join(', ') || 'none') + ' · poll: ' + (t.poll ? 'yes' : 'no'));
+    c.info('Link: ' + new URL('#/t/' + t.id, location.href).href);
+  });
+
+  def('comments', 'Threads', '/comments <thread_id>', 'List comment IDs and parent IDs in a thread', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    cmdList(c, 'Comments in ' + t.id, newestFirst(t.replies)
+      .map((r) => itemLine(r) + ' · parent ' + (r.parent || 'root')));
+  });
+
+  def('findposts', 'Threads', '/findposts <query>', 'Search content, tags, authors, and IDs, including removed posts', (c) => {
+    const query = c.a.join(' ').trim().toLowerCase();
+    if (!query) { usageErr(c); return; }
+    const rows = allItems().filter((it) =>
+      [it.id, it.title || '', it.body, user(it.author).name, ...(it.tags || [])]
+        .join(' ').toLowerCase().includes(query));
+    cmdList(c, 'Matching posts and comments', newestFirst(rows).map(itemLine));
+  });
+
+  def('retitle', 'Threads', '/retitle <thread_id> <title>', 'Change a thread title (up to 140 characters)', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    const title = commandText(c, c.a.slice(1), 140);
+    if (title == null) return;
+    t.title = title;
+    c.out('Title updated for ' + t.id + '.');
+  });
+
+  def('unhide', 'Threads', '/unhide <post_id>', 'Remove a hidden flag without restoring deleted content', (c) => {
+    const found = needItem(c);
+    if (!found) return;
+    const it = itemFrom(found);
+    it.hidden = false;
+    c.out(it.id + ' is no longer hidden.' + (it.deleted ? ' It is still deleted; use /restore to recover it.' : ''));
+  });
+
+  def('addtag', 'Threads', '/addtag <thread_id> <tag>', 'Add one tag, keeping existing tags (maximum 4)', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    const tags = commandTags(c, c.a.slice(1).join(' '));
+    if (!tags) return;
+    if (tags.length !== 1) { usageErr(c); return; }
+    const current = t.tags || [];
+    if (current.some((tag) => tag.toLowerCase() === tags[0].toLowerCase())) {
+      c.info('That tag is already on ' + t.id + '.'); return;
+    }
+    if (current.length >= 4) { c.err('A thread can have at most 4 tags.'); return; }
+    t.tags = current.concat(tags);
+    c.out('Added #' + tags[0] + ' to ' + t.id + '.');
+  });
+
+  def('removetag', 'Threads', '/removetag <thread_id> <tag>', 'Remove a tag (case-insensitive)', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    const tags = commandTags(c, c.a.slice(1).join(' '));
+    if (!tags) return;
+    if (tags.length !== 1) { usageErr(c); return; }
+    const current = t.tags || [];
+    const next = current.filter((tag) => tag.toLowerCase() !== tags[0].toLowerCase());
+    if (current.length === next.length) { c.info('That tag is not on ' + t.id + '.'); return; }
+    t.tags = next;
+    c.out('Removed #' + tags[0] + ' from ' + t.id + '.');
+  });
+
+  def('settags', 'Threads', '/settags <thread_id> <tag,tag,…|clear>', 'Replace all tags, or clear them (maximum 4)', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    const text = c.a.slice(1).join(' ').trim();
+    const tags = text.toLowerCase() === 'clear' ? [] : commandTags(c, text);
+    if (!tags) return;
+    t.tags = tags;
+    c.out('Tags for ' + t.id + ': ' + (tags.join(', ') || 'none') + '.');
+  });
+
+  def('pollresults', 'Threads', '/pollresults <thread_id>', 'Show poll option totals and percentages', (c) => {
+    const t = needThread(c);
+    if (!t) return;
+    if (!t.poll) { c.info('This thread has no poll.'); return; }
+    const total = t.poll.opts.reduce((n, opt) => n + (opt.voters || []).length, 0);
+    c.info(t.poll.q + ' — ' + total + ' vote(s)');
+    t.poll.opts.forEach((opt, i) => {
+      const n = (opt.voters || []).length;
+      c.info('  ' + (i + 1) + '. ' + opt.text + ': ' + n + ' (' + (total ? Math.round(n / total * 100) : 0) + '%)');
+    });
+  });
+
+  def('voteinfo', 'Threads', '/voteinfo <post_id>', 'Inspect upvotes, downvotes, and net score', (c) => {
+    const found = needItem(c);
+    if (!found) return;
+    const it = itemFrom(found);
+    c.info(it.id + ' · upvotes: ' + (it.up || []).length + ' · downvotes: ' + (it.down || []).length + ' · score: ' + score(it));
+  });
+
+  def('pinned', 'Threads', '/pinned', 'List pinned threads, including removed ones', (c) => {
+    cmdList(c, 'Pinned threads', newestFirst(db.threads.filter((t) => t.pinned)).map(itemLine));
+  });
+
+  def('locked', 'Threads', '/locked', 'List locked threads, including removed ones', (c) => {
+    cmdList(c, 'Locked threads', newestFirst(db.threads.filter((t) => t.locked)).map(itemLine));
+  });
+
+  def('featured', 'Threads', '/featured', 'List featured threads, including removed ones', (c) => {
+    cmdList(c, 'Featured threads', newestFirst(db.threads.filter((t) => t.featured)).map(itemLine));
+  });
+
   /* Boards */
   def('lockcategory', 'Boards', '/lockcategory <board>', 'Freeze a board to new topics', (c) => {
     const cat = needCat(c);
@@ -2533,6 +2851,62 @@
     if (skipped > 0) c.info('   ' + skipped + ' unknown id' + (skipped === 1 ? '' : 's') + ' skipped.');
   });
 
+  def('boards', 'Boards', '/boards', 'List board IDs, names, and topic locks in display order', (c) => {
+    cmdList(c, 'Boards', allCats().map((cat) => '~/' + cat.id + ' · ' + cat.name + (cat.locked ? ' [locked]' : '')));
+  });
+
+  def('boardinfo', 'Boards', '/boardinfo <board>', 'Show a board’s description, lock, and origin', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    c.info('~/' + cat.id + ' · ' + cat.name);
+    c.info('Description: ' + cat.desc);
+    c.info('New topics: ' + (cat.locked ? 'locked (staff exempt)' : 'open, subject to permissions'));
+    c.info('Type: ' + (COMMUNITIES.some((x) => x.id === cat.id) ? 'built-in' : 'custom'));
+  });
+
+  def('describecategory', 'Boards', '/describecategory <board> <text>', 'Set a board description (up to 200 characters)', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    const text = commandText(c, c.a.slice(1), 200);
+    if (text == null) return;
+    const st = db.catState[cat.id] = db.catState[cat.id] || {};
+    st.desc = text;
+    c.out('Description updated for ~/' + cat.id + '.');
+  });
+
+  def('boardstats', 'Boards', '/boardstats <board>', 'Count a board’s content, votes, and reports', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    const topics = db.threads.filter((t) => t.cat === cat.id);
+    const items = topics.flatMap((t) => [t, ...t.replies]);
+    c.info('~/' + cat.id + ' totals (including hidden/deleted content):');
+    c.info('Threads: ' + topics.length + ' · comments: ' + (items.length - topics.length));
+    c.info('Hidden items: ' + items.filter((it) => it.hidden).length + ' · deleted items: ' + items.filter((it) => it.deleted).length);
+    c.info('Votes: ' + items.reduce((n, it) => n + (it.up || []).length + (it.down || []).length, 0) +
+      ' · reports: ' + items.reduce((n, it) => n + (it.reports || []).length, 0));
+  });
+
+  def('boardpermissions', 'Boards', '/boardpermissions <board>', 'Show effective read/write access for each group', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    const perms = cat.perms || {};
+    c.info('Permissions for ~/' + cat.id + ':');
+    ['member', 'mod'].forEach((group) => c.info('  ' + group + ': ' + (perms[group] || 'write') +
+      (Object.hasOwn(perms, group) ? ' (override)' : ' (default)')));
+    c.info('  admin: write (administrators bypass board restrictions)');
+    if (cat.locked) c.info('  New topics are locked for non-staff; existing replies follow permissions.');
+  });
+
+  def('resetpermissions', 'Boards', '/resetpermissions <board> <member|mod|admin>', 'Remove one group’s board permission override', (c) => {
+    const cat = needCat(c);
+    if (!cat) return;
+    const group = (c.a[1] || '').toLowerCase();
+    if (c.a.length !== 2 || !['member', 'mod', 'admin'].includes(group)) { usageErr(c); return; }
+    const st = db.catState[cat.id];
+    if (st && st.perms) delete st.perms[group];
+    c.out('~/' + cat.id + ': ' + group + ' permission override removed. Other settings are unchanged.');
+  });
+
   /* Queue */
   def('reviewqueue', 'Queue', '/reviewqueue', 'Open the moderation dashboard', (c) => {
     const rows = [];
@@ -2597,6 +2971,49 @@
     byReport.forEach((rp) => { if (!rp.escalated) { rp.escalated = true; n++; } });
     if (!n) { c.err('No pending report matches "' + key + '"'); return; }
     c.out('⬆ Escalated ' + n + ' report' + (n === 1 ? '' : 's') + ' to senior staff.');
+  });
+
+  def('reports', 'Queue', '/reports <post_id>', 'Show report IDs, reasons, reporters, and escalation state', (c) => {
+    const found = needItem(c);
+    if (!found) return;
+    const it = itemFrom(found);
+    const rows = (it.reports || []).slice().sort((a, b) => b.at - a.at);
+    cmdList(c, 'Reports on ' + it.id, rows.map((rp) => rp.id + ' · ' + new Date(rp.at).toLocaleString() +
+      ' · ' + user(rp.by).name + ' · ' + rp.reason + (rp.escalated ? ' [escalated]' : '')));
+  });
+
+  def('report', 'Queue', '/report <post_id> <reason>', 'Flag a post or comment with a reason for staff review', (c) => {
+    const found = needItem(c);
+    if (!found) return;
+    const reason = commandText(c, c.a.slice(1), 160);
+    if (reason == null) return;
+    const it = itemFrom(found);
+    const reports = it.reports || [];
+    if (reports.some((rp) => rp.by === db.currentUserId)) { c.err('You already reported this item.'); return; }
+    const rp = { id: uid('rp'), by: db.currentUserId, at: Date.now(), reason };
+    it.reports = reports.concat(rp);
+    c.out('Report ' + rp.id + ' added to ' + it.id + '. Use /reports ' + it.id + ' to inspect it.');
+  });
+
+  def('reportedusers', 'Queue', '/reportedusers', 'Summarize unresolved reports by content author', (c) => {
+    const counts = new Map();
+    allItems().forEach((it) => {
+      if (!(it.reports || []).length) return;
+      const row = counts.get(it.author) || { items: 0, reports: 0 };
+      row.items++;
+      row.reports += it.reports.length;
+      counts.set(it.author, row);
+    });
+    cmdList(c, 'Authors with reported content', [...counts].sort((a, b) => b[1].reports - a[1].reports)
+      .map(([id, row]) => id + ' · ' + user(id).name + ' · ' + row.items + ' item(s) · ' + row.reports + ' report(s)'));
+  });
+
+  def('hiddenposts', 'Queue', '/hiddenposts', 'List hidden posts and comments for staff review', (c) => {
+    cmdList(c, 'Hidden posts and comments', newestFirst(allItems().filter((it) => it.hidden)).map(itemLine));
+  });
+
+  def('deletedposts', 'Queue', '/deletedposts', 'List soft-deleted posts and comments that can be restored', (c) => {
+    cmdList(c, 'Deleted posts and comments', newestFirst(allItems().filter((it) => it.deleted)).map(itemLine));
   });
 
   /* System */
@@ -2692,6 +3109,60 @@
     } else {
       c.err('Usage: ' + c.usage);
     }
+  });
+
+  def('status', 'System', '/status', 'Show forum availability, counts, and pending moderation', (c) => {
+    const items = allItems();
+    c.info('Maintenance: ' + (db.maintenance ? 'on' : 'off') + ' · banner: ' + (db.banner || 'none'));
+    c.info('Boards: ' + allCats().length + ' · users: ' + Object.keys(db.users).length +
+      ' · threads: ' + db.threads.length + ' · comments: ' + (items.length - db.threads.length));
+    c.info('Reported items: ' + items.filter((it) => (it.reports || []).length).length +
+      ' · restricted accounts: ' + Object.values(db.users).filter((u) => statusOf(u)).length);
+    c.info('Active plugins: ' + (Object.keys(db.plugins).filter((key) => db.plugins[key]).join(', ') || 'none'));
+    c.info('Data is stored in this browser on this device, not synced to a server.');
+  });
+
+  def('activity', 'System', '/activity [duration]', 'Count new members, posts, and comments (default: 1d)', (c) => {
+    const duration = c.a.length ? parseDur(c.a[0]) : DAY;
+    const since = Date.now() - duration;
+    if (c.a.length > 1 || !Number.isSafeInteger(duration) || duration <= 0 || !Number.isFinite(new Date(since).getTime())) {
+      c.err('Usage: ' + c.usage + ' — use a positive duration such as 12h or 7d.'); return;
+    }
+    const topics = db.threads.filter((t) => t.created >= since);
+    const replies = db.threads.flatMap((t) => t.replies).filter((r) => r.created >= since);
+    const authors = new Set([...topics, ...replies].map((it) => it.author));
+    c.info('Activity since ' + new Date(since).toLocaleString() + ' (including hidden/deleted content):');
+    c.info('New members: ' + Object.values(db.users).filter((u) => u.joined >= since).length +
+      ' · threads: ' + topics.length + ' · comments: ' + replies.length + ' · contributing authors: ' + authors.size);
+  });
+
+  def('topusers', 'System', '/topusers [limit]', 'Rank members by karma (default: 10, maximum: 50)', (c) => {
+    const limit = c.a.length ? Number(c.a[0]) : 10;
+    if (c.a.length > 1 || !Number.isInteger(limit) || limit < 1 || limit > 50) { usageErr(c); return; }
+    const rows = Object.values(db.users).map((u) => ({ u, s: stats(u.id) }))
+      .sort((a, b) => b.s.karma - a.s.karma || a.u.name.localeCompare(b.u.name)).slice(0, limit);
+    cmdList(c, 'Top members by karma (all stored content)', rows.map(({ u, s }, i) =>
+      (i + 1) + '. ' + u.id + ' · ' + u.name + ' · karma ' + s.karma + ' · posts ' + s.posts + ' · comments ' + s.comments));
+  });
+
+  def('tagstats', 'System', '/tagstats', 'Count tags on public, non-deleted threads', (c) => {
+    const counts = new Map();
+    db.threads.filter((t) => !t.hidden && !t.deleted &&
+      ((db.catState[t.cat] || {}).perms || {}).member !== 'none').forEach((t) => {
+      const tags = new Set((t.tags || []).map((tag) => tag.toLowerCase()));
+      tags.forEach((tag) => counts.set(tag, (counts.get(tag) || 0) + 1));
+    });
+    cmdList(c, 'Public thread tags', [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([tag, count]) => '#' + tag + ' · ' + count + ' thread(s)'));
+  });
+
+  def('storage', 'System', '/storage', 'Show local database size without exposing credentials', (c) => {
+    const bytes = JSON.stringify(db).length * 2;
+    c.info('Storage key: ' + KEY);
+    c.info('Estimated database size (UTF-16): ' + bytes.toLocaleString() + ' bytes (' + (bytes / 1024).toFixed(1) + ' KiB).');
+    c.info('Accounts: ' + Object.keys(db.accounts).length + ' · audit entries: ' + db.audit.length +
+      ' · notifications: ' + db.notes.length);
+    c.info('Browser quotas vary. Use /backup now before clearing browser data; backups contain account data.');
   });
 
   /* ---- console wiring ---- */

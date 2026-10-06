@@ -27,6 +27,7 @@ Opening `index.html` directly via `file://` also works in most browsers.
 - Email + password sign-in with local accounts (salted, iterated password hashes); your own posts and comments can be deleted
 - Refined dark / light themes, responsive layouts, reduced-motion support, and keyboard-friendly sign-in
 - Hash-based routing (`#/`, `#/about`, `#/profile`, `#/t/<id>`, `#/new`, `#/user/<id>`)
+- Admin moderation console with **101 commands**, including 50 new tools for user lookup, profile edits, tags, reports, board permissions, and forum statistics. Open **`>_`** or press **Ctrl + `**; use `/help` for all commands or `/help Users` to filter. See [COMMANDS.md](COMMANDS.md) for the additions and examples.
 
 ## Files
 
@@ -35,6 +36,8 @@ Opening `index.html` directly via `file://` also works in most browsers.
 | `index.html` | Shell: topbar, sidebar, SVG icons, auth modal, toast |
 | `styles.css` | Design system (CSS variables for both themes) |
 | `app.js` | Storage layer, router, views and event handling |
+| `COMMANDS.md` | Moderation command reference, examples, and safety notes |
+| `tests/commands.test.cjs` | Command regression tests (`node --test tests/commands.test.cjs`) |
 
 ## Structure
 

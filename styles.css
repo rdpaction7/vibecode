@@ -1039,13 +1039,14 @@ textarea::placeholder, .input::placeholder { color: var(--faint); }
   .home-columns { grid-template-columns: minmax(0, 1fr); }
   .community-rail { display: grid; grid-template-columns: 1fr 1fr; }
   .rail-guidelines { grid-column: 1 / -1; }
-  .hero-terminal { display: none; }
-  .feed-hero { grid-template-columns: 1fr; padding: 30px; }
+  /* Keep the little Mac-style terminal on the home screen at tablet widths. */
+  .feed-hero { grid-template-columns: minmax(0, 1.1fr) minmax(235px, .9fr); padding: 30px; }
   .feed-hero h1 { font-size: 40px; }
-  .feed-hero::after { content: '>_'; position: absolute; bottom: 25px; right: 28px; font: 90px var(--mono); color: #a4e8ba15; pointer-events: none; }
+  .feed-hero::after { display: none; }
   .hero-body { z-index: 1; }
   .topbar-actions { gap: 4px; }
-  .cmd-btn { display: none; }
+  /* The command terminal is useful on every screen size, not just desktop. */
+  .cmd-btn { display: grid; }
   .about-grid { grid-template-columns: 1fr; }
 }
 
@@ -1066,9 +1067,8 @@ textarea::placeholder, .input::placeholder { color: var(--faint); }
   .nav-heading, .sidebar-bottom { display: none; }
   .primary-nav { padding-bottom: 6px; }
   .nav-tab.active { background: none; }
-  .feed-hero { grid-template-columns: 1.1fr 1fr; padding: 25px; gap: 18px; margin-bottom: 26px; }
+  .feed-hero { grid-template-columns: minmax(0, 1.1fr) minmax(230px, 1fr); padding: 25px; gap: 18px; margin-bottom: 26px; }
   .hero-terminal { display: block; }
-  .feed-hero::after { display: none; }
   .feed-hero h1 { font-size: 32px; }
   .hero-kicker { font-size: 7px; }
   .hero-about { font-size: 10px; }
@@ -1101,7 +1101,8 @@ textarea::placeholder, .input::placeholder { color: var(--faint); }
   .feed-hero h1 { font-size: 36px; }
   .hero-kicker { font-size: 8px; margin-bottom: 16px; }
   .hero-sub { font-size: 12px; max-width: 290px; }
-  .hero-terminal { display: none; }
+  /* Stack, rather than remove, the home terminal on phones. */
+  .hero-terminal { display: block; margin-top: 26px; transform: rotate(-.8deg); }
   .hero-actions { gap: 15px; }
   .feed-heading h2 { font-size: 18px; }
   .feed-heading > span { font-size: 9px; }
@@ -1143,5 +1144,6 @@ textarea::placeholder, .input::placeholder { color: var(--faint); }
   .feed-hero { padding: 22px; }
   .feed-hero h1 { font-size: 31px; }
   .hero-kicker { font-size: 7px; }
+  .terminal-content { padding: 14px 15px 10px; }
   .post-meta .dot { display: none; }
 }
