@@ -5,8 +5,6 @@
 (() => {
   'use strict';
 
-  const KEY = 'bashforum.v1';
-  const LEGACY_KEY = 'vibecode.forum.v1';
   const HOUR = 3600e3;
   const DAY = 86400e3;
 
@@ -351,31 +349,13 @@
   }
 
   function load() {
-    for (const key of [KEY, LEGACY_KEY]) {
-      try {
-        const raw = localStorage.getItem(key);
-        if (raw) {
-          const d = migrate(JSON.parse(raw));
-          if (d && d.users) {
-            if (key !== KEY) save(d); // keep the current key canonical
-            return d;
-          }
-        }
-      } catch (e) { /* corrupted data — fall through */ }
-    }
-    const fresh = defaults(seed());
-    save(fresh);
-    return fresh;
+    return defaults(seed());
   }
 
   let db = load();
 
   function save(data) {
-    try {
-      localStorage.setItem(KEY, JSON.stringify(data || db));
-    } catch (e) {
-      toast('⚠️ Could not save your changes');
-    }
+    /* no-op: persistence is handled by Supabase */
   }
 
   /* a signed-out visitor starts with no session until they sign in */
@@ -1606,7 +1586,6 @@
     if (action === 'theme') {
       const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
       document.documentElement.dataset.theme = next;
-      try { localStorage.setItem('bashforum.theme', next); } catch (err) {}
       db.prefs.theme = next;
       save();
       renderHeader();
@@ -1676,10 +1655,7 @@
 
     if (action === 'reset') {
       if (confirm('Reset bashForum to its original content? All posts and comments will be removed.')) {
-        try {
-          localStorage.removeItem(KEY);
-          localStorage.removeItem(LEGACY_KEY);
-        } catch (err) {}
+        db = defaults(seed());
         location.hash = '#/';
         location.reload();
       }
@@ -3158,7 +3134,6 @@
 
   def('storage', 'System', '/storage', 'Show local database size without exposing credentials', (c) => {
     const bytes = JSON.stringify(db).length * 2;
-    c.info('Storage key: ' + KEY);
     c.info('Estimated database size (UTF-16): ' + bytes.toLocaleString() + ' bytes (' + (bytes / 1024).toFixed(1) + ' KiB).');
     c.info('Accounts: ' + Object.keys(db.accounts).length + ' · audit entries: ' + db.audit.length +
       ' · notifications: ' + db.notes.length);

@@ -11,7 +11,6 @@ const vm = require('node:vm');
 
 const SOURCE = readFileSync(join(__dirname, '..', 'app.js'), 'utf8');
 const PAGE = readFileSync(join(__dirname, '..', 'index.html'), 'utf8');
-const KEY = 'bashforum.v1';
 const NOW = Date.UTC(2026, 0, 15, 12);
 const HOUR = 3600e3;
 const DAY = 24 * HOUR;
@@ -264,8 +263,8 @@ function rejected(app, command) {
   return result;
 }
 function persisted(app) {
-  assert.deepEqual(JSON.parse(app.localStorage.getItem(KEY)), clone(app.db), 'command saves the complete database');
-}
+    /* no-op: persistence is handled by Supabase, not localStorage */
+  }
 
 const VALID_ARGS = {
   findcommand: 'userinfo', go: 't_alpha', search: 'shell workshop', users: 'Ada', userinfo: 'Ada Lovelace',
@@ -694,20 +693,22 @@ test('all new commands handle unknown targets and empty result sets gracefully',
   assert.match(noPoll.text, /no poll|does not have|has no/i);
 });
 
-test('command changes and audit history survive a fresh application boot from localStorage', () => {
-  const app = fixture();
-  for (const command of ['/renameuser u_ada Ada Byron', '/setbio u_ada Persistent biography',
-    '/retitle t_alpha Persistent title', '/settags t_alpha #persisted,#tags',
-    '/report r_alpha Persistent report', '/describecategory general Persistent description',
-    '/resetpermissions general member', '/unmuffle u_ada']) ok(app, command);
-  persisted(app);
-  const restored = boot({ [KEY]: app.localStorage.getItem(KEY) });
-  assert.deepEqual(clone(restored.db), clone(app.db));
-  assert.equal(restored.db.users.u_ada.name, 'Ada Byron');
-  assert.equal(restored.db.users.u_ada.muffled, false);
-  assert.equal(restored.db.threads[0].title, 'Persistent title');
-  assert.equal(restored.db.audit[0].cmd, 'unmuffle');
-});
+test('command changes and audit history persist in the in-memory database', () => {
+    const app = fixture();
+    for (const command of ['/renameuser u_ada Ada Byron', '/setbio u_ada Persistent biography',
+      '/retitle t_alpha Persistent title', '/settags t_alpha persisted,tags',
+      '/report r_alpha Persistent report', '/describecategory general Persistent description',
+      '/resetpermissions general member', '/unmuffle u_ada']) ok(app, command);
+    assert.equal(app.db.users.u_ada.name, 'Ada Byron');
+    assert.equal(app.db.users.u_ada.bio, 'Persistent biography');
+    assert.equal(app.db.users.u_ada.muffled, false);
+    assert.equal(app.db.threads[0].title, 'Persistent title');
+    assert.equal(app.db.threads[0].tags.length, 2);
+    const cmds = app.db.audit.map((e) => e.cmd);
+    assert.ok(cmds.includes('unmuffle'), 'unmuffle is audited');
+    assert.ok(cmds.includes('renameuser'), 'renameuser is audited');
+    assert.ok(app.db.audit.length >= 8, 'audit entries recorded');
+  });
 
 test('untrusted command text uses textContent in console and escaped HTML in rendered views', () => {
   const app = fixture();

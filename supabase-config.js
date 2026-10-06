@@ -6,6 +6,6 @@
  */
 window.BASHFORUM_CONFIG = Object.freeze({
   mode: 'supabase', // Use 'demo' explicitly for the old, browser-only sandbox.
-  url: '',         // Example: https://your-project.supabase.co
-  publishableKey: '', // sb_publishable_... or the legacy anon JWT
+  url: 'https://qkiympdtuifrpwtdsnpo.supabase.co',
+  publishableKey: 'sb_publishable_S4ndfZKqdzWpgW6koQAAoA_dx2vD_QQ',
 });

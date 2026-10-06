@@ -9,8 +9,7 @@
 <script>
   /* set theme before first paint to avoid a flash */
   try {
-    var t = localStorage.getItem('bashforum.theme');
-    if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    var t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
     document.documentElement.dataset.theme = t;
   } catch (e) {}
 </script>
